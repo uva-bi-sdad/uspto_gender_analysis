@@ -3,6 +3,7 @@
 
 library(dplyr)
 library(readr)
+library(naniar)
 
 #
 # Filter WIPO data -----------------------------
@@ -36,6 +37,33 @@ pharma <- wipo %>%
 civil <- wipo %>%
   filter(field_id == "35")
 
+rm(wipo)
+
+#
+# get patents ---------------------------------------
+#
+
+# dataset is larger than 4GB -- will get a warning and data will be truncated using an unzip R function
+
+# system("unzip data/PatentsView/original/patent.tsv.zip")  # run once, results in patent.tsv
+
+patents <- read_tsv("patent.tsv", col_names = TRUE, col_types = "ccccccccccc", 
+                    na = c("", " ", "na", "NA", "N/A"))
+
+pharma_pat <- patents %>%
+  filter(id %in% pharma$patent_id) %>%
+  select(id, date)
+
+civil_pat <- patents %>%
+  filter(id %in% civil$patent_id) %>%
+  select(id, date)
+
+# extract year from data information
+pharma_pat$year <- substr(pharma_pat$date, 1, 4)
+civil_pat$year <- substr(civil_pat$date, 1, 4)
+
+rm(patents)
+
 
 #
 # crosswalk between patent, inventor, location - get IDs --------------------------
@@ -50,6 +78,8 @@ pharma_cw <- crosswalk %>%
 civil_cw <- crosswalk %>%
   filter(patent_id %in% civil$patent_id)
 
+rm(crosswalk)
+
 #
 # get inventors (could be multiple per patent) ----------------------------------------
 #
@@ -62,6 +92,8 @@ pharma_inv <- inventors %>%
 
 civil_inv <- inventors %>%
   filter(id %in% civil_cw$inventor_id)
+
+rm(inventors)
 
 #
 # get locations (of inventors) ----------------------------------
@@ -76,56 +108,33 @@ pharma_loc <- locations %>%
 civil_loc <- locations %>%
   filter(id %in% civil_cw$location_id)
 
+rm(locations)
 
 #
-# get patents (of inventors) ----------------------------------
+# merge patent, inventor and location info ---------------------------
 #
 
-patents <- read_tsv(unz("/project/biocomplexity/sdad/projects_data/uspto/PatentsView/original/patent.tsv.zip", "patent.tsv"), col_names = TRUE, 
-                      col_types = "ccccnnccc", na = c("", " ", "na", "NA", "N/A"))
+temp01 <- merge(pharma_cw, pharma_pat, by.x = "patent_id", by.y = "id", all.x = TRUE)
+temp02 <- merge(temp01, pharma_inv, by.x = "inventor_id", by.y = "id", all.x = TRUE)
+pharma_pat_inv_loc <- merge(temp02, pharma_loc, by.x = "location_id", by.y = "id", all.x = TRUE)
+pharma_pat_inv_loc <- pharma_pat_inv_loc[ , c(3,2,1,4:17)]
 
-pharma_pat <- patents %>%
-  filter(id %in% pharma_cw$patent_id)
+temp01 <- merge(civil_cw, civil_pat, by.x = "patent_id", by.y = "id", all.x = TRUE)
+temp02 <- merge(temp01, civil_inv, by.x = "inventor_id", by.y = "id", all.x = TRUE)
+civil_pat_inv_loc <- merge(temp02, civil_loc, by.x = "location_id", by.y = "id", all.x = TRUE)
+civil_pat_inv_loc <- civil_pat_inv_loc[ , c(3,2,1,4:17)]
 
-civil_pat <- patents %>%
-  filter(id %in% civil_cw$patent_id) 
-
-
-#
-# merge location with inventor info ---------------------------
-#
-
-temp01 <- merge(pharma_cw, pharma_inv, by.x = "inventor_id", by.y = "id", all.x = TRUE)
-temp02 <- merge(temp01, pharma_pat, by.x = "patent_id", by.y = "id", all.x = TRUE)
-pharma_inventors <- merge(temp02, pharma_loc, by.x = "location_id", by.y = "id", all.x = TRUE)
-
-temp01 <- merge(civil_cw, civil_inv, by.x = "inventor_id", by.y = "id", all.x = TRUE)
-temp02 <- merge(temp01, civil_pat, by.x = "patent_id", by.y = "id", all.x = TRUE)
-civil_inventors <- merge(temp02, civil_loc, by.x = "location_id", by.y = "id", all.x = TRUE)
-
-
-#
-# difference between inventor country and patent country ---------------------
-#
-
-pharma_inventors <- pharma_inventors %>%
-  rename(country_patent = country.x, country_inv = country.y)
-
-civil_inventors <- civil_inventors %>%
-  rename(country_patent = country.x, country_inv = country.y)
 
 #
 # save working dataframes ----------------------------
 #
 
-write.csv(pharma_inventors, 
-          "/project/biocomplexity/sdad/projects_data/uspto/PatentsView/working/pharma_inventors_v01.csv", 
+write.csv(pharma_pat_inv_loc, 
+          "/project/biocomplexity/sdad/projects_data/uspto/PatentsView/working/pharma_pat_inv_loc.csv", 
           row.names = FALSE)
 
-write.csv(civil_inventors, 
-          "/project/biocomplexity/sdad/projects_data/uspto/PatentsView/working/civil_inventors_v01.csv", 
+write.csv(civil_pat_inv_loc, 
+          "/project/biocomplexity/sdad/projects_data/uspto/PatentsView/working/civil_pat_inv_loc.csv", 
           row.names = FALSE)
 
-#
-# Remaining TO DO: add how many patents each inventor was on in each year
-#
+
