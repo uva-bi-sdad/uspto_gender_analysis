@@ -1,0 +1,31 @@
+---
+title: "Civil Engineering Patent Inventor Locations"
+author: ""
+date: ""
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=FALSE}
+htmltools::includeHTML("all_locations.html")
+```
+<br>
+```{r, echo=FALSE}
+htmltools::includeHTML("female_locations.html")
+```
+
+
+:::::::::::::: {.columns}
+
+::: {.column width="48%"}
+
+:::
+
+::: {.column width="48%"}
+
+:::
+
+::::::::::::::
