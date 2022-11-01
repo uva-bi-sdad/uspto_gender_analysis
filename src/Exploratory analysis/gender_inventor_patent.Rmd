@@ -1,0 +1,121 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Load packages
+```{r}
+library(jsonlite)
+library(dplyr)
+library(crosstable)
+library(ggplot2)
+library(nlme)
+library(texreg)
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+library(coefplot)
+library(jtools)
+library(ggstance)
+library(tidyr)
+library(usmap) #import the package
+library(ggplot2) #use ggplot2 to add layer for visualization
+library(mapview)
+library(sf)
+library(PNWColors)
+library(transformr)
+library(readr)
+library(stringr)
+options(dplyr.summarise.inform = FALSE)
+```
+
+# Upload USPTO data and data treatment
+```{r}
+# upload the patent data
+pharma_patent <- read.csv("/project/biocomplexity/sdad/projects_data/uspto/PatentsView/working/pharma_pat_inv_loc.csv")
+pharma_patent$field <- "pharmaceuticals"
+civil_patent<- read.csv("/project/biocomplexity/sdad/projects_data/uspto/PatentsView/working/civil_pat_inv_loc.csv")
+civil_patent$field <- "civil engineering"
+
+# combine data from the two fields
+patent <- dplyr::bind_rows(pharma_patent, civil_patent)
+patent$female_flag <- 1-patent$male_flag
+patent$gender[patent$male_flag==1] <- "male"
+patent$gender[patent$male_flag==0] <- "female"
+patent <- patent %>% mutate(gender = ifelse(is.na(gender), 'unknown', gender))
+
+# subset to US, count the number of patent by inventor over time
+US_patent <- patent %>% filter(country=="US") 
+```
+
+# Descriptive analysis
+
+## Gender distribution among US inventors
+```{r}
+# gender distribution by fields
+US_patent_desc <- US_patent %>% 
+  select(inventor_id,gender,field) %>% 
+  unique()
+
+crosstable(US_patent_desc, gender, by=field, total= "all", margin="column")
+```
+
+There is more women inventor in Pharma (22.54%) than Civil engineering (6.76%).
+
+
+## Trends in the gender proportion of inventors, number of patents by gender
+```{r}
+US_patent01 <- US_patent %>% 
+  select(inventor_id,patent_id,gender,year,field) %>%
+  group_by(gender,year,field) %>% 
+  mutate(Ninventors = length(unique(inventor_id)), 
+         Npatents = length(unique(patent_id)),
+         .keep = "unused") %>%
+  unique()
+
+# compute the female proportion by field over time
+US_patent02 <- US_patent01 %>% group_by(year,field) %>% summarise(total_inventors=sum(Ninventors), total_patents=sum(Npatents))
+US_patent02 <- merge(US_patent01, US_patent02, by=c('year','field'))
+US_patent02$prop_gender <- 100*US_patent02$Ninventors/US_patent02$total_inventors
+
+# plot the trends
+ggplot(US_patent02[US_patent02$gender=='female',], aes(x=year, y=Ninventors)) + geom_line(aes(colour=field)) + labs(x = "year", y="Number of women inventors", title='number of women inventors in US')
+ggplot(US_patent02[US_patent02$gender=='female',], aes(x=year, y=prop_gender)) + geom_line(aes(colour=field)) + labs(x = "year", y="proportion of women", title='proportion of women inventors in US')
+
+```
+
+
+## growth rate difference
+```{r}
+reg01 <- lm(log(prop_gender) ~ year + factor(field)*year -1, data = US_patent02[US_patent02$gender=='female',])
+summary(reg01)
+```
+
+## collaboration between women inventors
+```{r}
+# proportion of female by patent
+US_patent_gender <- US_patent %>% group_by(patent_id,field,year) %>% summarise(patent_diversity_rate=100*mean(1-male_flag,na.rm=T))
+
+# for patents with at least on female, what is the average female propotion over time and field
+US_patent_gender$dum_diverse <- US_patent_gender$patent_diversity_rate
+US_patent_gender$dum_diverse[US_patent_gender$patent_diversity_rate==0] <- NA
+patent_diversity <- US_patent_gender %>% 
+  group_by(field,year) %>% 
+  summarise(diversity_rate=100*mean(patent_diversity_rate>0, na.rm=T), score_diversity=mean(dum_diverse, na.rm=T))
+
+# plot
+par(mfrow=c(1,2)) 
+ggplot(patent_diversity, aes(x=year, y=diversity_rate)) + geom_line(aes(colour=field)) + labs(x = "year", y="proportion of patents", title='proportion of patents with at least one women inventors over time')
+ggplot(patent_diversity, aes(x=year, y=score_diversity)) + geom_line(aes(colour=field)) + labs(x = "year", y="average proportion of women", title='average proportion of women inventors by patents over time')
+
+```
+
+The trends in the porportion of patent with at least one female is similar than the proportion of women inventors. In addition, the average proportion of women by patent is decreasing (even more in pharma). This suggest that inventors collaboration is not driven th 
+
+```{r}
+hist(US_patent_gender$patent_diversity_rate)
+```
+
+

@@ -1,0 +1,979 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Load packages
+```{r}
+library(jsonlite)
+library(dplyr)
+library(crosstable)
+library(ggplot2)
+library(nlme)
+library(texreg)
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+library(coefplot)
+library(jtools)
+library(ggstance)
+library(tidyr)
+library(usmap) #import the package
+library(ggplot2) #use ggplot2 to add layer for visualization
+library(mapview)
+library(sf)
+library(PNWColors)
+library(transformr)
+library(readr)
+library(stringr)
+library(ggpubr)
+library(ggrepel)
+options(dplyr.summarise.inform = FALSE)
+
+
+# set the color palette
+cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+#color blind palette with black
+cbPalette.blk<-c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+gender.pallete <- c("#006DDB", "#DB6D00")
+field.pallete <- c("#B66DFF", "#004949")
+type.pallete <- c("#920000","#009999")
+```
+
+# Upload USPTO data and data treatment
+```{r}
+# upload the patent data
+pharma_patent <- read.csv("/project/biocomplexity/sdad/projects_data/uspto/PatentsView/working/pharma_pat_inv_loc.csv")
+pharma_patent$field <- "pharmaceuticals"
+civil_patent<- read.csv("/project/biocomplexity/sdad/projects_data/uspto/PatentsView/working/civil_pat_inv_loc.csv")
+civil_patent$field <- "civil engineering"
+
+# combine data from the two fields
+patent <- dplyr::bind_rows(pharma_patent, civil_patent)
+patent$female_flag <- 1-patent$male_flag
+patent$gender[patent$male_flag==1] <- "men"
+patent$gender[patent$male_flag==0] <- "women"
+patent <- patent %>% mutate(gender = ifelse(is.na(gender), 'unknown', gender))
+
+# subset to US, count the number of patent by inventor over time
+US_patent <- patent %>% filter(country=="US") 
+```
+
+# Descriptive analysis
+
+## Gender distribution among US inventors
+```{r}
+# gender distribution by fields
+US_patent_desc <- US_patent %>% 
+  select(inventor_id,patent_id,gender,field) %>%
+  group_by(inventor_id,gender,field) %>%
+  summarise(Npatent=length(patent_id))
+
+crosstable(US_patent_desc, gender, by=field, total= "all", margin="column")
+
+summary(US_patent_desc$Npatent)
+```
+
+There is more women inventor in Pharma (22.54%) than Civil engineering (6.76%).
+
+
+## Trends in the gender proportion of inventors, number of patents by gender
+```{r}
+# measure women collaboration
+US_patent01 <- US_patent %>% 
+  select(inventor_id,patent_id,gender,year,field) %>%
+  group_by(gender,year,field) %>% 
+  summarise(Ninventors = length(unique(inventor_id))) %>%
+  pivot_wider(names_from = gender, values_from = Ninventors) %>%
+  group_by(field,year) %>%
+  mutate(total=men+women, pct_female=100*women/total) %>%
+  pivot_longer(!c('field','year'), names_to='gender', values_to='value') 
+
+# plot the trends
+plt1 <- ggplot(subset(US_patent01, (field=='pharmaceuticals') & (gender %in% c('women','men')) ), aes(x=year, y=value, fill=gender)) + 
+  geom_bar(stat="identity", colour="black") +
+  ylim(0,20000) +
+  scale_fill_manual(values=gender.pallete) +
+  labs(x = "year", y="Number of inventors", title='Pharmaceuticals', fill='')
+
+plt2 <- ggplot(subset(US_patent01, (field=='civil engineering') & (gender %in% c('women','men')) ), aes(x=year, y=value, fill=gender)) + 
+  geom_bar(stat="identity", colour="black") +
+  ylim(0,20000) +
+  scale_fill_manual(values=gender.pallete) +
+  labs(x = "year", y="", title=' Civil engineering', fill='')
+
+
+plt3 <- ggplot(US_patent01[US_patent01$gender=='pct_female',], aes(x=year, y=value, fill=field)) + 
+  geom_line(aes(colour=field)) + 
+  scale_color_manual(values=field.pallete) +
+  labs(x = "year", y="proportion of women inventors", colour='')+
+  theme(plot.title = element_text(size=10))
+
+# plot
+ggarrange(plt1, plt2,  
+          ncol = 2, nrow = 1,
+          widths = c(3, 3) ,
+          legend="bottom",
+          common.legend=T)
+
+plt3
+```
+
+## gender bias from collaboration
+```{r}
+# patent with no collaboration (team size =1), gender distribution
+patent_category <- US_patent %>% 
+  select(patent_id,inventor_id,gender,male_flag,field,year) %>%
+  group_by(patent_id,field,year) %>% 
+  summarise(Nwomen=sum(1-male_flag,na.rm=T), 
+            Ninventor=length(inventor_id),
+            dummy_collab=if_else(Ninventor>1,1,0)) %>%
+  group_by(field,year,dummy_collab) %>%
+  summarise(Npatent=length(patent_id),
+            Npatent_nowomen=sum(Nwomen==0,na.rm=T),
+            Npatent_withwomen=sum(Nwomen>0,na.rm=T),
+            pct_withwomen=100*Npatent_withwomen/(Npatent_withwomen + Npatent_nowomen)) %>%
+  pivot_longer(!c('field','year','dummy_collab'), names_to='gender', values_to='value') %>%
+  mutate(gender = replace(gender, gender == 'Npatent_nowomen', 'men'), 
+         gender = replace(gender, gender == 'Npatent_withwomen', 'women'),
+         type = if_else(dummy_collab==1,'Collaborative','Solo')) 
+
+
+
+
+# Distribution of patents by type (solo or collaborative)
+plt4a <- ggplot(subset(patent_category, (field=='pharmaceuticals') & (gender %in% c('Npatent')) ), aes(x=year, y=value, fill=type)) + 
+  geom_bar(stat="identity",colour="black") +
+  ylim(0,10000) +
+  scale_fill_manual(values=type.pallete) +
+  labs(x = "year", y="Number of patents", title='Pharmaceuticals', fill='') + 
+  theme(plot.title = element_text(size=10))
+
+plt4b <- ggplot(subset(patent_category, (field=='civil engineering') & (gender %in% c('Npatent')) ), aes(x=year, y=value, fill=type)) + 
+  geom_bar(stat="identity",colour="black") +
+  ylim(0,10000) +
+  scale_fill_manual(values=type.pallete) +
+  labs(x = "year", y="", title=' Civil Engineering', fill='') +
+  theme(plot.title = element_text(size=10))
+
+ggarrange(plt4a, plt4b,  
+          ncol = 2, nrow = 1,
+          widths = c(3, 3) ,
+          legend="bottom",
+          common.legend=T)
+
+
+
+# solo patent distribution
+plt5a <- ggplot(subset(patent_category, (dummy_collab==0) & (field=='pharmaceuticals') & (gender %in% c('men','women')) ), aes(x=year, y=value, fill=gender)) + 
+  geom_bar(stat="identity",colour="black") +
+  ylim(0,3500) +
+  scale_fill_manual(values=gender.pallete) +
+  labs(x = "year", y="Number of patents", title='Pharmaceuticals', fill='') + 
+  theme(plot.title = element_text(size=10))
+
+plt6a <- ggplot(subset(patent_category, (dummy_collab==0) & (field=='civil engineering') & (gender %in% c('men','women')) ), aes(x=year, y=value, fill=gender)) + 
+  geom_bar(stat="identity",colour="black") +
+  ylim(0,3500) +
+  scale_fill_manual(values=gender.pallete) +
+  labs(x = "year", y="", title=' Civil Engineering', fill='') +
+  theme(plot.title = element_text(size=10))
+
+ggarrange(plt5a, plt6a,  
+          ncol = 2, nrow = 1,
+          widths = c(3, 3) ,
+          legend="bottom",
+          common.legend=T)
+
+
+
+
+# collaborative patents distribution
+patent_category <- patent_category %>%
+  mutate(gender = replace(gender, gender == 'men', 'only men'), 
+         gender = replace(gender, gender == 'women', 'with women'))
+
+
+plt5b <- ggplot(subset(patent_category, (dummy_collab==1) & (field=='pharmaceuticals') & (gender %in% c('only men','with women')) ), aes(x=year, y=value, fill=gender)) + 
+  geom_bar(stat="identity",colour="black") +
+  ylim(0,8000) +
+  scale_fill_manual(values=gender.pallete) +
+  labs(x = "year", y="Number of patents", title='Pharmaceuticals', fill='') + 
+  theme(plot.title = element_text(size=10))
+
+plt6b <- ggplot(subset(patent_category, (dummy_collab==1) & (field=='civil engineering') & (gender %in% c('only men','with women')) ), aes(x=year, y=value, fill=gender)) + 
+  geom_bar(stat="identity", colour="black") +
+  ylim(0,8000) +
+  scale_fill_manual(values=gender.pallete) +
+  labs(x = "year", y="", title=' Civil Engineering', fill='') +
+  theme(plot.title = element_text(size=10))
+
+ggarrange(plt5b, plt6b,  
+          ncol = 2, nrow = 1,
+          widths = c(3, 3) ,
+          legend="bottom",
+          common.legend=T)
+
+
+
+# # effect from collaboration
+# patent_category <- patent_category %>%
+#   mutate(label=if_else(dummy_collab==0,'collaboration','No collaboration'))
+# 
+# plt4c <- ggplot(subset(patent_category, (dummy_collab==0) & (gender=='pct_withwomen') ), aes(x=year, y=value, colour=field)) + 
+#   geom_line(aes(colour=field)) + 
+#   ylim(0,60) +
+#   scale_colour_manual(values=field.pallete) +
+#   labs(x = "year", y="proportion of women", title='Solo Patents', colour='') +
+#   theme(plot.title = element_text(size=10))
+# 
+# plt4d <- ggplot(subset(patent_category, (dummy_collab==1) & (gender=='pct_withwomen') ), aes(x=year, y=value, colour=field)) + 
+#   geom_line(aes(colour=field)) + 
+#   ylim(0,60) +
+#   scale_colour_manual(values=field.pallete) +
+#   labs(x = "year", y="", title='Collaborative Patents', colour='') +
+#   theme(plot.title = element_text(size=10))
+# 
+# ggarrange(plt4c, plt4d,  
+#           ncol = 2, nrow = 1,
+#           widths = c(3, 3) ,
+#           legend="bottom",
+#           common.legend=T)
+```
+
+## Diversity within collaborative patents
+```{r}
+# proportion of patents with
+within_collab_diverse <- US_patent %>% 
+  select(patent_id,inventor_id,gender,male_flag,field,year) %>%
+  group_by(patent_id,field,year) %>% 
+  summarise(Nwomen=sum(1-male_flag,na.rm=T), 
+            Ninventor=length(inventor_id),
+            ratio_women=(Nwomen/Ninventor)) %>%
+  filter((Nwomen>0)&(Ninventor>1)) %>%
+  mutate(group_year=cut(year, 
+                        breaks=c(1975, 1990, 2000, 2010,2022), 
+                        labels=c("1976-1990","1990-2000","2000-2010","2010-2021")))
+  
+
+
+
+# within collaborative patent 
+within_collab_diverse01 <- within_collab_diverse %>%
+    select(year,field,group_year,Ninventor,ratio_women) %>%
+    group_by(field,group_year) %>%
+    summarise(team_size=round(mean(Ninventor),2),
+              sd_size=round(sd(Ninventor),2),
+              sd_ratio_women=round(sd(ratio_women),2),
+              ratio_women=round(mean(100*ratio_women),2))
+
+
+# distribution of patents per number of women
+within_collab_diverse02 <- within_collab_diverse %>%
+  group_by(patent_id,year,group_year,field) %>%
+  mutate(Nwomen_coded=if_else(Nwomen>2,3,Nwomen)) %>%
+  select(patent_id,year,group_year,field,Nwomen_coded) %>%
+  group_by(year,group_year,Nwomen_coded,field) %>%
+  summarise(value=length(unique(patent_id))) %>%
+  pivot_wider(names_from = Nwomen_coded, values_from = value) %>% 
+  mutate(total= `1`+`2`+`3`,
+         pct_one=100*`1`/total,
+         pct_two=100*`2`/total,
+         pct_more_3=100*`3`/total) %>%
+  select(year,group_year,field,pct_one,pct_two,pct_more_3) %>%
+  group_by(field,group_year) %>%
+  summarise(pct_one=round(mean(pct_one, na.rm=T),2),
+            pct_two=round(mean(pct_two, na.rm=T),2),
+            pct_more_3=round(mean(pct_more_3, na.rm=T),2))
+
+within_collab_diverse01 <- merge(within_collab_diverse01,within_collab_diverse02, by.x=c('field','group_year'), by.y=c('field','group_year'))
+within_collab_diverse01
+
+```
+
+# 1.Is it the same woman who collaborate or different women?
+```{r}
+patent_collab <- US_patent %>% 
+  select(patent_id,inventor_id,gender,male_flag,field,year) %>%
+  group_by(patent_id,field,year) %>% 
+  mutate(Ninventor=length(inventor_id), 
+         dummy_collab=if_else(Ninventor>1,1,0)) %>%
+  filter(male_flag==0) %>%
+  group_by(inventor_id,dummy_collab) %>%
+  mutate(Npatent=length(unique(patent_id))) %>%
+  group_by(year,field,dummy_collab) %>%
+  summarise(Nwomen=length(unique(inventor_id)),
+            avg_patent=mean(Npatent),
+            sd_patent=sd(Npatent))
+
+# plot
+plt7a <- ggplot(subset(patent_collab, (dummy_collab==1) ), aes(x=year, y=Nwomen, colour=field)) + 
+  geom_line(aes(colour=field)) + 
+  scale_colour_manual(values=field.pallete) +
+  labs(x = "year", y="Number of unique women on collaborative \n patents", title='', colour='') +
+  theme(plot.title = element_text(size=10))
+
+plt7b <- ggplot(subset(patent_collab, (dummy_collab==0) ), aes(x=year, y=Nwomen, colour=field)) + 
+  geom_line(aes(colour=field)) + 
+  scale_colour_manual(values=field.pallete) +
+  labs(x = "year", y="", title='Solo Patents', colour='') +
+  theme(plot.title = element_text(size=10))
+
+plt7c <- ggplot(subset(patent_collab, (dummy_collab==1) ), aes(x=year, y=avg_patent, colour=field)) + 
+  geom_line(aes(colour=field)) + 
+  scale_colour_manual(values=field.pallete) +
+  labs(x = "year", y="Average number of patents by \n women collaborating", title='', colour='') +
+  theme(plot.title = element_text(size=10))
+
+ggarrange(plt7a, plt7c,  
+          ncol = 2, nrow = 1,
+          widths = c(3, 3) ,
+          legend="bottom",
+          common.legend=T)
+
+
+# Desciptive analysis
+```
+
+```{r}
+# identify new and old inventors each year
+inventor_status <- US_patent %>% 
+  select(inventor_id,gender,field,year) %>%
+  unique()
+
+inventor_status$new <- 'new inventor'
+yearlist <- unique(inventor_status$year)
+
+for (f in c('pharmaceuticals','civil engineering')){
+  for (t in yearlist[2:length(yearlist)]){
+    oldinventorslist <- unique(inventor_status$inventor_id[(inventor_status$field==f)&(inventor_status$year<t)])
+    inventor_status$new[(inventor_status$field==f)&(inventor_status$year==t)&(inventor_status$inventor_id %in% oldinventorslist)] <- 'senior inventor'
+  }
+}
+  
+# identify if woman inventor collaborate, 
+inventor_desc <- US_patent %>% 
+  select(patent_id,inventor_id,gender,male_flag,field,year) %>%
+  group_by(patent_id,field,year) %>% 
+  mutate(Nwomen=sum(1-male_flag,na.rm=T), 
+         Ninventor=length(unique(inventor_id)),
+         dummy_collab=if_else(Ninventor>1,1,0),
+         more_women=if_else(Nwomen>1,1,0)) 
+
+# merge the two data set: select 
+inventor_desc <- merge(inventor_desc, inventor_status, by.x=c('inventor_id','gender','field','year'), by.y=c('inventor_id','gender','field','year'), all.x=T)
+
+```
+
+
+```{r}
+# plot
+# description of inventors  ylim(0,5000) +
+status <- inventor_status %>%
+  filter(gender=='women') %>%
+  group_by(field,year,new) %>%
+  summarise(number=length(unique(inventor_id)))
+
+
+plt7a <- ggplot(subset(status, (field=='pharmaceuticals') ), aes(x=year, y=number, fill=new)) + 
+  geom_bar(stat="identity",colour="black") +
+  ylim(0,4500) +
+  scale_fill_manual(values=gender.pallete) +
+  labs(x = "year", y="Number of women inventors", title='Pharmaceuticals', fill='') + 
+  theme(plot.title = element_text(size=10))
+
+plt8a <- ggplot(subset(status, (field=='civil engineering') ), aes(x=year, y=number, fill=new)) + 
+  geom_bar(stat="identity", colour="black") +
+  ylim(0,4500) +
+  scale_fill_manual(values=gender.pallete) +
+  labs(x = "year", y="", title=' Civil Engineering', fill='') +
+  theme(plot.title = element_text(size=10))
+
+ggarrange(plt7a, plt8a,  
+          ncol = 2, nrow = 1,
+          widths = c(3, 3) ,
+          legend="bottom",
+          common.legend=T)
+
+
+
+Descriptive00 <- inventor_desc %>%
+  filter(gender=='women') %>%
+  group_by(inventor_id,field,year) %>%
+  mutate(dummy_collab=if_else(mean(dummy_collab)>0,1,0),
+         dummy_collab = replace(dummy_collab, dummy_collab == 1, 'collaborative'), 
+         dummy_collab = replace(dummy_collab, dummy_collab == 0, 'solo')) %>%
+  group_by(field,year,dummy_collab) %>%
+  summarise(collabwomen=length(unique(inventor_id)))
+
+
+plt7b <- ggplot(subset(Descriptive00, (field=='pharmaceuticals') ), aes(x=year, y=collabwomen, fill=dummy_collab)) + 
+  geom_bar(stat="identity",colour="black") +
+  ylim(0,4500) +
+  scale_fill_manual(values=type.pallete) +
+  labs(x = "year", y="Number of women inventors", title='Pharmaceuticals', fill='') + 
+  theme(plot.title = element_text(size=10))
+
+plt8b <- ggplot(subset(Descriptive00, (field=='civil engineering') ), aes(x=year, y=collabwomen, fill=dummy_collab)) + 
+  geom_bar(stat="identity", colour="black") +
+  ylim(0,4500) +
+  scale_fill_manual(values=type.pallete) +
+  labs(x = "year", y="", title=' Civil Engineering', fill='') +
+  theme(plot.title = element_text(size=10))
+
+ggarrange(plt7b, plt8b,  
+          ncol = 2, nrow = 1,
+          widths = c(3, 3) ,
+          legend="bottom",
+          common.legend=T)
+
+```
+
+
+```{r}
+# description of inventors
+status <- inventor_status %>%
+  filter(gender=='women') %>%
+  group_by(field,year,new) %>%
+  summarise(number=length(unique(inventor_id))) %>%
+  pivot_wider(names_from = new, values_from = number) %>%
+  mutate(total=`senior inventor` + `new inventor`,
+         pct_new = 100*`new inventor`/total,
+         pct_old = 100*`senior inventor`/total) %>%
+  select(field,year,total,pct_new,pct_old) %>%
+  mutate(group_year=cut(year, 
+                        breaks=c(1975, 1990, 2000, 2010,2022), 
+                        labels=c("1976-1990","1990-2000","2000-2010","2010-2021"))) %>%
+  group_by(field,group_year) %>%
+  summarise(total= round(mean(total, na.rm=T),0),
+            pct_new=round(mean(pct_new, na.rm=T),2),
+            pct_old=round(mean(pct_old, na.rm=T),2))
+
+
+Descriptive00 <- inventor_desc %>%
+  filter(gender=='women') %>%
+  group_by(inventor_id,dummy_collab) %>%
+  filter(dummy_collab==1) %>%
+  mutate(Npatent=length(unique(patent_id))) %>%
+  group_by(field,year) %>%
+  summarise(collabwomen=length(unique(inventor_id)),
+            Npatent=mean(Npatent)) %>%
+  mutate(group_year=cut(year, 
+                        breaks=c(1975, 1990, 2000, 2010,2022), 
+                        labels=c("1976-1990","1990-2000","2000-2010","2010-2021"))) %>%
+  group_by(field,group_year) %>%
+  summarize(collabwomen=round(mean(collabwomen),2),
+            Npatent=round(mean(Npatent),2))
+
+
+Descriptive00 <- merge(Descriptive00, status, by.x=c('field','group_year'), by.y=c('field','group_year')) %>%
+  mutate(pct_women_collab = round(100*collabwomen/total,2)) %>%
+  select(field,group_year,total,pct_women_collab,pct_new,pct_old)
+
+Descriptive00
+```
+
+```{r}
+# Do who is collaborating more? new or old inventors
+Descriptive01 <- inventor_desc %>%
+  select(inventor_id,patent_id,gender,field,year,dummy_collab,new) %>%
+  mutate(dummy_collab = replace(dummy_collab, dummy_collab == 0, 'solo'), 
+         dummy_collab = replace(dummy_collab, dummy_collab == 1, 'collaboration')) %>%
+  filter(gender=='women') %>%
+  group_by(field,year,dummy_collab,new) %>%
+  summarise(value=length(inventor_id)) %>%
+  pivot_wider(names_from = dummy_collab, values_from = value) %>%
+  mutate(group_year=cut(year, 
+                        breaks=c(1975, 1990, 2000, 2010,2022), 
+                        labels=c("1976-1990","1990-2000","2000-2010","2010-2021")),
+         total= solo+collaboration,
+         pct_solo=100*solo/total,
+         pct_collab=100*collaboration/total) %>%
+  group_by(field,group_year,new) %>%
+  summarize(pct_solo=round(mean(pct_solo),2),
+            pct_collab=round(mean(pct_collab),2))
+ 
+Descriptive01[Descriptive01$new=='new inventor',]
+
+Descriptive01[Descriptive01$new=='senior inventor',]
+
+```
+
+
+# proportion of women working with other women in collaborative patents
+```{r}
+Descriptive02 <- inventor_desc %>%
+  filter((gender=='women')&(Ninventor>1)) %>%
+  mutate(otherwomen=if_else(Nwomen>1,1,0)) %>%
+  group_by(inventor_id,year,field) %>%
+  summarise(otherwomen=if_else(mean(otherwomen)>0,1,0)) %>%
+  group_by(inventor_id,year,field) %>%
+  mutate(otherwomen = replace(otherwomen, otherwomen == 0, 'collaborate with only men'), 
+         otherwomen = replace(otherwomen, otherwomen == 1, 'collaborate with other women')) %>%
+  group_by(year,field,otherwomen) %>%
+  summarise(value=length(unique(inventor_id)))
+  
+
+#plot
+plt7c <- ggplot(subset(Descriptive02, (field=='pharmaceuticals') ), aes(x=year, y=value, fill=otherwomen)) + 
+  geom_bar(stat="identity",colour="black") +
+  ylim(0,4500) +
+  scale_fill_manual(values=type.pallete) +
+  labs(x = "year", y="Number of women inventors \n collaborating in patents", title='Pharmaceuticals', fill='') + 
+  theme(plot.title = element_text(size=10))
+
+plt8c <- ggplot(subset(Descriptive02, (field=='civil engineering') ), aes(x=year, y=value, fill=otherwomen)) + 
+  geom_bar(stat="identity", colour="black") +
+  ylim(0,4500) +
+  scale_fill_manual(values=type.pallete) +
+  labs(x = "year", y="", title=' Civil Engineering', fill='') +
+  theme(plot.title = element_text(size=10))
+
+
+ggarrange(plt7c, plt8c,  
+          ncol = 2, nrow = 1,
+          widths = c(3, 3) ,
+          legend="bottom",
+          common.legend=T)
+
+# characteristrics of those who collaborated
+Descriptive02 <- inventor_desc %>%
+  filter((gender=='women')&(Ninventor>1)&(Nwomen>1)) %>%
+  select(patent_id,year,field,new) %>%
+  mutate(value=1) %>%
+  group_by(patent_id,year,field,new) %>%
+  unique() %>%
+  pivot_wider(names_from = new, values_from = value) %>%
+  replace(is.na(.), 0) %>%
+  group_by(patent_id,year,field) %>%
+  mutate(`new inventor`=1-`new inventor`,
+         class=`new inventor` + `senior inventor`) %>%
+  group_by(year,field,class) %>%
+  summarise(class = replace(class, class == 0, 'only new inventors'), 
+            class = replace(class, class == 2, 'new and senior inventors'),
+            class = replace(class, class == 1, 'only senior inventors'),
+            value=length(unique(patent_id)))
+  
+
+#plot
+plt7d <- ggplot(subset(Descriptive02, (field=='pharmaceuticals') ), aes(x=year, y=value, fill=class) ) +
+  geom_bar(stat="identity", position='fill') +
+  labs(x = "year", y="Proportion of patents with more \n than 02 women inventors", title='Pharmaceuticals', fill='') +
+  theme(plot.title = element_text(size=10))
+
+plt8d <- ggplot(subset(Descriptive02, (field=='civil engineering') ), aes(x=year, y=value, fill=class )) +
+  geom_bar(stat="identity", position='fill') +
+  labs(x = "year", y="", title=' Civil Engineering', fill='') +
+  theme(plot.title = element_text(size=10))
+
+
+ggarrange(plt7d, plt8d,
+          ncol = 2, nrow = 1,
+          widths = c(3, 3) ,
+          legend="bottom",
+          common.legend=T)
+```
+
+
+
+
+
+## Get the effect of collaboration
+```{r}
+inventors_collab <- US_patent %>% 
+  select(patent_id,inventor_id,gender,male_flag,field,year) %>%
+  group_by(patent_id,field,year) %>% 
+  mutate(Ninventor=length(unique(inventor_id)), 
+         dummy_collab=if_else(Ninventor>1,1,0)) %>%
+  group_by(gender,year,field,dummy_collab) %>%
+  summarise(Ninventors = length(unique(inventor_id))) %>%
+  pivot_wider(names_from = gender, values_from = Ninventors) %>%
+  group_by(field,year,dummy_collab) %>%
+  mutate(total=men+women, 
+         pct_female=100*women/total)
+
+#plot
+plt13a <- ggplot(subset(inventors_collab, (dummy_collab==1) ), aes(x=year, y=pct_female, fill=field)) + 
+  geom_line(aes(colour=field)) + 
+  ylim(0,25) +
+  scale_colour_manual(values=field.pallete) +
+  labs(x = "year", y="", title='Collaborative Patents', fill='') +
+  theme(plot.title = element_text(size=10))
+
+plt13b <- ggplot(subset(inventors_collab, (dummy_collab==0) ), aes(x=year, y=pct_female, fill=field)) + 
+  geom_line(aes(colour=field)) + 
+  ylim(0,25) +
+  scale_colour_manual(values=field.pallete) +
+  labs(x = "year", y="", title='Solo Patents', fill='') +
+  theme(plot.title = element_text(size=10))
+
+plt13c <- ggplot(US_patent01[US_patent01$gender=='pct_female',], aes(x=year, y=value, fill=field)) + 
+  geom_line(aes(colour=field)) + 
+  ylim(0,25) +
+  scale_color_manual(values=field.pallete) +
+  labs(x = "year", y="proportion of women inventors", title='All Patents', fill='') +
+  theme(plot.title = element_text(size=10))
+
+
+ggarrange(plt13c, plt13b,  
+          ncol = 2, nrow = 1,
+          widths = c(3, 3) ,
+          legend="bottom",
+          common.legend=T)
+
+```
+
+
+```{r}
+# Contribution of collaboration to increase the gap
+solo <- subset(inventors_collab, (dummy_collab==0) ) %>%
+  mutate(dummy_gap=if_else(field=='pharmaceuticals',1,-1)) %>%
+  group_by(year) %>%
+  summarise(diff_solo = mean(pct_female*dummy_gap))
+
+inventor_all <- US_patent %>% 
+  select(inventor_id,patent_id,gender,year,field) %>%
+  group_by(gender,year,field) %>% 
+  summarise(Ninventors = length(unique(inventor_id))) %>%
+  pivot_wider(names_from = gender, values_from = Ninventors) %>%
+  group_by(field,year) %>%
+  mutate(total=men+women, 
+         pct_female=100*women/total,
+         dummy_gap=if_else(field=='pharmaceuticals',1,-1)) %>%
+  group_by(year) %>%
+  summarise(diff_all = mean(pct_female*dummy_gap))
+
+patent_type <- merge(inventor_all, solo, by.x='year', by.y='year') %>%
+  mutate(diff_collab = diff_all - diff_solo) %>%
+  select(year,diff_solo,diff_collab,diff_all) %>%
+  pivot_longer(!c('year'), names_to='gap', values_to='value') %>%
+  mutate(gap = replace(gap, gap == 'diff_solo', 'Solo'), 
+         gap = replace(gap, gap == 'diff_collab', 'Residual'),
+         gap = replace(gap, gap == 'diff_all', 'all'))
+
+# plot
+plt14 <- ggplot(subset(patent_type, (gap %in% c('Solo','Residual')) ), aes(x=year, y=value, fill=gap)) + 
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=type.pallete) +
+  labs(x = "year", 
+       y="Difference in the proportion of women between \n Pharmaceuticals and Civil Engineering", 
+       fill='',
+       title='') +
+  theme(plot.title = element_text(size=10))
+ 
+plt14
+```
+
+
+## Others factors explaining the effects (solo effect especially)
+
+```{r}
+# use the bls API
+library(devtools)
+library(rjson)
+library(blsAPI)
+library(dplyr)
+library(tidyr)
+library(ggplot2) #use ggplot2 to add layer for visualization
+options(dplyr.summarise.inform = FALSE)
+```
+
+# 1. get all the data
+```{r}
+# serie ID
+# LNU02070022: percent women in civil engineering
+# LNU02038247: all in civil engineering
+# List of occupations in pharmaceuticals: biochemistry, microbiologist, chemistry, pharmacist, (LEU0254701100)
+
+# LNU02038327: all  pharmacist 
+# LNU02070108: percent women pharmacist 
+# LNU0201A5E9: all pharmacy technician    'LNU0201A5E9', 'LNU0201A8F8', LNU0201A8F8=LNU0201A8F8*LNU0201A5E9/100,
+# LNU0201A8F8: percent women pharmacy technician
+# LNU02038268: all chemist
+# LNU02070044: percent women chemist
+# LNU02038246: all chemical engineer
+# LNU02070021: percent women chemical engineer
+# LNU02038199: all medical and health services managers
+# LNU02069970: percent women  medical and health services managers
+# LNU02038265: all medical scientists
+# LNU02070041: percent women medical scientists
+
+seriID <- c('LNU02070022', 'LNU02038247', 'LNU02038327', 'LNU02070108',  'LNU02038268', 'LNU02070044', 'LNU02038246', 'LNU02070021', 'LNU02038199', 'LNU02069970', 'LNU02038265', 'LNU02070041')
+
+payload <- list(
+  'seriesid'=seriID,
+  'startyear'=1983,
+  'endyear'=2002,
+  #'catalog'=FALSE,
+  #'calculations'=TRUE,
+  'annualaverage'=TRUE,
+  'registrationKey'='cb402f3bd90f46238e6beb45b2dcee65')
+dataCPS01 <- blsAPI(payload, 2, return_data_frame =T)
+
+
+payload <- list(
+  'seriesid'=seriID,
+  'startyear'=2003,
+  'endyear'=2022,
+  #'catalog'=FALSE,
+  #'calculations'=TRUE,
+  'annualaverage'=TRUE,
+  'registrationKey'='cb402f3bd90f46238e6beb45b2dcee65')
+dataCPS02 <- blsAPI(payload, 2, return_data_frame =T)
+
+# combine the two data
+dataCPS <- rbind(dataCPS01,dataCPS02)
+
+
+# compute the proportion
+dataCPS <- dataCPS %>% 
+  mutate(value=as.numeric(value),
+         year=as.numeric(year)) %>%
+  pivot_wider(names_from = seriesID, values_from = value) %>%
+  mutate(LNU02070022=LNU02070022*LNU02038247/100,
+         LNU02070108=LNU02070108*LNU02038327/100,
+         LNU02070044=LNU02070044*LNU02038268/100,
+         LNU02070021=LNU02070021*LNU02038246/100,
+         LNU02069970=LNU02069970*LNU02038199/100,
+         LNU02070041=LNU02070041*LNU02038265/100) %>%
+  pivot_longer(!c('year','period','periodName'), names_to='seriesID', values_to='value')
+
+
+# recode serieID, label the value 
+dataCPS$field <- NA
+dataCPS$gender <- NA
+dataCPS$occupation <- NA
+
+# occupations
+dataCPS[dataCPS$seriesID %in% seriID[1:2],]$occupation <- 'civil engineering'
+dataCPS[dataCPS$seriesID %in% seriID[3:4],]$occupation <- 'pharmacist'
+dataCPS[dataCPS$seriesID %in% seriID[5:6],]$occupation <- 'chemist'
+dataCPS[dataCPS$seriesID %in% seriID[7:8],]$occupation <- 'chemical engineer'
+dataCPS[dataCPS$seriesID %in% seriID[9:10],]$occupation <- 'medical and health services managers'
+dataCPS[dataCPS$seriesID %in% seriID[11:12],]$occupation <- 'medical scientists'
+
+
+# civil engineering
+dataCPS$field[dataCPS$seriesID %in% seriID[1:2]] <- 'civil engineering'
+dataCPS[dataCPS$seriesID=='LNU02070022',]$gender <- 'women'
+dataCPS[dataCPS$seriesID=='LNU02038247',]$gender <- 'all'
+
+# pharmaceuticals
+dataCPS[dataCPS$seriesID %in% seriID[3:12],]$field <- 'pharmaceuticals'
+dataCPS[dataCPS$seriesID %in% seriID[c(3,5,7,9,11)],]$gender <- 'all'
+dataCPS[dataCPS$seriesID %in% seriID[c(4,6,8,10,12)],]$gender <- 'women'
+
+# aggregation across field
+dataCPS <- dataCPS %>%
+  select(year,field,gender,occupation,value) %>%
+  group_by(year,field,gender,occupation) %>%
+  summarise(value=sum(value, na.rm=T)) %>%
+  pivot_wider(names_from = gender, values_from = value) %>%
+  mutate(men=all-women,
+         pct_women=100*women/all) %>%
+  pivot_longer(!c('year','field','occupation'), names_to='gender', values_to='value')
+
+dataCPS00 <- dataCPS %>%
+  filter(gender %in% c('men','women')) %>%
+  group_by(year,field,gender) %>%
+  summarise(value=sum(value, na.rm=T))
+
+# plot
+plt15 <- ggplot(subset(dataCPS00, (field=='pharmaceuticals') & (gender %in% c('men','women')) ), aes(x=year, y=value, fill=gender)) + 
+  geom_bar(stat="identity") +
+  ylim(0,2000) +
+  xlim(2009,2022) +
+  scale_fill_manual(values=gender.pallete) +
+  labs(x = "year", y="Employment", title='Pharmaceuticals occupations', fill='') + 
+  theme(plot.title = element_text(size=10))
+
+plt16 <- ggplot(subset(dataCPS00, (field=='civil engineering') & (gender %in% c('men','women')) ), aes(x=year, y=value, fill=gender)) + 
+  geom_bar(stat="identity") +
+  ylim(0,2000) +
+  xlim(2009,2022) +
+  scale_fill_manual(values=gender.pallete) +
+  labs(x = "year", y="Employment", title='Civil engineering occupations', fill='') + 
+  theme(plot.title = element_text(size=10))
+
+
+# plot
+ggarrange(plt15, plt16,
+          ncol = 2, nrow = 1,
+          widths = c(3, 3) ,
+          legend="bottom",
+          common.legend=T)
+
+
+```
+
+
+```{r}
+# graduated field description
+dataCPS1 <- dataCPS %>%
+  filter(field=='pharmaceuticals') 
+  
+ # plot
+plt15a <- ggplot(subset(dataCPS1, (gender %in% c('all')) ), aes(x=year, y=value, fill=occupation)) + 
+  geom_bar(stat="identity") +
+  labs(x = "year", y="Employment", title='Pharmaceuticals Occupations', fill='') + 
+  theme(plot.title = element_text(size=10))+
+  xlim(2009,2022) +
+  guides(fill=guide_legend(nrow=2, byrow=TRUE))
+
+plt16a <- ggplot(subset(dataCPS1, (gender %in% c('pct_women')) ), aes(x=year, y=value, fill=occupation)) + 
+  geom_line(aes(colour=occupation)) + 
+  labs(x = "year", y="Percentage of women", title='Pharmaceuticals Occupations', colour='') + 
+  theme(plot.title = element_text(size=10))+
+  xlim(2009,2022) +
+  guides(color=guide_legend(nrow=2, byrow=TRUE))
+
+
+# plot
+ggarrange(plt15a, plt16a,
+          ncol = 2, nrow = 1,
+          widths = c(3, 3) ,
+          legend="bottom",
+          common.legend=T) 
+```
+
+
+
+
+```{r}
+# Education data
+#ncses_doctorate <- read_csv("src/education/ncses_doctorate.csv")
+
+# data treatment
+ncses_doctorate <- ncses_doctorate %>% filter(!(SE_field=='Total for selected values'))
+ncses_doctorate <- ncses_doctorate %>% filter(!(broad_field=='Total for selected values'))
+ncses_doctorate <- ncses_doctorate %>% filter(!(detailed_field=='Total for selected values'))
+ncses_doctorate <- ncses_doctorate %>% filter(!(detailed_field=='Chemistry+D16'))
+ncses_doctorate <- ncses_doctorate  %>% 
+  mutate(sex=recode(sex, 'Total for selected values'='Total')) %>%
+  select(year,detailed_field,sex,value)
+colnames(ncses_doctorate) <- c('year','gradfield','gender','value')
+
+gradfieldlist <- unique(ncses_doctorate$gradfield)
+ncses_doctorate <- ncses_doctorate %>%
+  mutate(field=if_else(gradfield %in% gradfieldlist[1:3],'pharmaceuticals','civil engineering'))
+
+ncses_doctorate01 <- ncses_doctorate %>%
+  select(year,gender,value,field) %>%
+  mutate(gender = replace(gender, gender == 'Male', 'men'), 
+         gender = replace(gender, gender == 'Female', 'women'),
+         gender = replace(gender, gender == 'Total', 'all')) %>%
+  group_by(year,gender,field) %>%
+  summarise(value=sum(value, na.rm=T)) %>%
+  pivot_wider(names_from = gender, values_from = value) %>%
+  mutate(pct_women=100*women/all) %>%
+  pivot_longer(!c('year','field'), names_to='gender', values_to='value')
+  
+ # plot
+plt17 <- ggplot(subset(ncses_doctorate01, (field=='pharmaceuticals') & (gender %in% c('men','women')) ), aes(x=year, y=value, fill=gender)) + 
+  geom_bar(stat="identity", colour='black') +
+  ylim(0,15000) +
+  scale_fill_manual(values=gender.pallete) +
+  labs(x = "year", y="Number of graduated doctoral students", title='Pharmaceuticals field', fill='') + 
+  theme(plot.title = element_text(size=10))
+
+plt18 <- ggplot(subset(ncses_doctorate01, (field=='civil engineering') & (gender %in% c('men','women')) ), aes(x=year, y=value, fill=gender)) + 
+  geom_bar(stat="identity", colour='black') +
+  ylim(0,15000) +
+  scale_fill_manual(values=gender.pallete) +
+  labs(x = "year", y="Number of graduated doctoral students", title='Civil engineering field', fill='') + 
+  theme(plot.title = element_text(size=10))
+
+
+# plot
+ggarrange(plt17, plt18,
+          ncol = 2, nrow = 1,
+          widths = c(3, 3) ,
+          legend="bottom",
+          common.legend=T) 
+```
+
+
+
+```{r}
+plt18a <- ggplot(subset(ncses_doctorate01, (field=='civil engineering') & (gender %in% c('men','women')) ), aes(x=year, y=value, fill=gender)) + 
+  geom_bar(stat="identity", colour='black') +
+  scale_fill_manual(values=gender.pallete) +
+  labs(x = "year", y="Number of graduated doctoral students", title='Civil engineering field', fill='') + 
+  theme(plot.title = element_text(size=10))
+
+plt18a
+```
+
+```{r}
+# graduated field description
+ncses_doctorate02 <- ncses_doctorate %>%
+  filter(field=='pharmaceuticals') %>%
+  select(year,gender,value,gradfield) %>%
+  mutate(gender = replace(gender, gender == 'Male', 'men'), 
+         gender = replace(gender, gender == 'Female', 'women'),
+         gender = replace(gender, gender == 'Total', 'all')) %>%
+  pivot_wider(names_from = gender, values_from = value) %>%
+  mutate(pct_women=100*women/all) %>%
+  pivot_longer(!c('year','gradfield'), names_to='gender', values_to='value')
+  
+ # plot
+plt17a <- ggplot(subset(ncses_doctorate02, (gender %in% c('all')) ), aes(x=year, y=value, fill=gradfield)) + 
+  geom_bar(stat="identity",colour='black') +
+  scale_fill_manual(values=c('#FF9900','#996666','#000066')) +
+  labs(x = "year", y="Number of PhD graduated students", title='Pharmaceuticals', fill='') + 
+  theme(plot.title = element_text(size=10))
+
+plt18a <- ggplot(subset(ncses_doctorate02, (gender %in% c('pct_women')) ), aes(x=year, y=value, fill=gradfield)) + 
+  geom_line(aes(colour=gradfield)) + 
+  scale_fill_manual(values=c('#FF9900','#996666','#000066')) +
+  labs(x = "year", y="Percentage of women", title='Pharmaceuticals', fill='') + 
+  theme(plot.title = element_text(size=10))
+
+
+# plot
+ggarrange(plt17a, plt18a,
+          ncol = 2, nrow = 1,
+          widths = c(3, 3) ,
+          legend="bottom",
+          common.legend=T) 
+```
+
+
+```{r}
+dataCPS00 <- dataCPS00 %>%
+  pivot_wider(names_from = gender, values_from = value) %>%
+  mutate(pct_women=100*women/(men+women)) %>%
+  pivot_longer(!c('year','field'), names_to='gender', values_to='value')
+  
+# Proportion of women in employed occupations and PhD graduated students
+plt19 <- ggplot(subset(dataCPS00, (gender=='pct_women') ), aes(x=year, y=value, fill=field)) + 
+  geom_line(aes(colour=field)) + 
+  ylim(0,75) +
+  scale_colour_manual(values=field.pallete) +
+  labs(x = "year", y="proportion of women employed", title='Employment', colour='') +
+  theme(plot.title = element_text(size=10))
+
+plt20 <- ggplot(subset(ncses_doctorate01, (gender=='pct_women') ), aes(x=year, y=value, fill=field)) + 
+  geom_line(aes(colour=field)) + 
+  ylim(0,75) +
+  scale_colour_manual(values=field.pallete) +
+  labs(x = "year", y="", title='Education', colour='') +
+  theme(plot.title = element_text(size=10))
+
+
+# plot
+ggarrange(plt19, plt20,
+          ncol = 2, nrow = 1,
+          widths = c(3, 3) ,
+          legend="bottom",
+          common.legend=T)
+
+```
+
+
+
+
+
+

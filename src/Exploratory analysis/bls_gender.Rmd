@@ -1,0 +1,113 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r}
+# use the bls API
+library(devtools)
+library(rjson)
+library(blsAPI)
+library(dplyr)
+library(tidyr)
+library(ggplot2) #use ggplot2 to add layer for visualization
+options(dplyr.summarise.inform = FALSE)
+```
+
+
+# 1. extract the data from CPS (BLS)
+```{r}
+#NB: maximum year of extraction 20 years
+# LNU02070022: serie ID for civil engineering
+# LNU02072202: serrie ID for pharma 
+
+payload <- list(
+  'seriesid'=c('LNU02070022','LNU02038247','LNU02072202','LNU02043001'),
+  'startyear'=2010,
+  'endyear'=2022,
+  #'catalog'=FALSE,
+  #'calculations'=TRUE,
+  'annualaverage'=TRUE,
+  'registrationKey'='cb402f3bd90f46238e6beb45b2dcee65')
+dataCPS <- blsAPI(payload, 2, return_data_frame =T)
+
+
+# recode serieID, label the value 
+dataCPS$field <- NA
+dataCPS$gender <- NA
+dataCPS[dataCPS$seriesID=='LNU02070022',]$field <- 'civil engineering'
+dataCPS[dataCPS$seriesID=='LNU02038247',]$field <- 'civil engineering'
+dataCPS[dataCPS$seriesID=='LNU02072202',]$field <- 'pharmaceutical'
+dataCPS[dataCPS$seriesID=='LNU02043001',]$field <- 'pharmaceutical'
+
+dataCPS[dataCPS$seriesID=='LNU02070022',]$gender <- 'women'
+dataCPS[dataCPS$seriesID=='LNU02038247',]$gender <- 'all'
+dataCPS[dataCPS$seriesID=='LNU02072202',]$gender <- 'women'
+dataCPS[dataCPS$seriesID=='LNU02043001',]$gender <- 'all'
+
+dataCPS <- dataCPS %>% select(year,value,field,gender) 
+colnames(dataCPS) <- c('year','value','field','gender')
+dataCPS$year <- as.numeric(dataCPS$year)
+dataCPS$value <- as.numeric(dataCPS$value)
+
+# compute the proportion
+dataCPS <- dataCPS %>% pivot_wider(names_from = gender, values_from = value)
+dataCPS$total_women <- dataCPS$women*dataCPS$all/100
+```
+
+# 2. trends in the proportion of women
+```{r}
+#
+ggplot(dataCPS, aes(x=year, y=women)) + geom_line(aes(colour=field)) + labs(x = "year", y="proportion of women", title ="proportion of women across field (CPS)")
+ggplot(dataCPS, aes(x=year, y=total_women)) + geom_line(aes(colour=field)) + labs(x = "year", y="number of women", title ="Number of women in thousand across field (CPS)")
+```
+
+# 1. extract the data from CES (BLS)
+```{r}
+#NB: maximum year of extraction 20 years
+# LNU02070022: serie ID for civil engineering
+# LNU02072202: serrie ID for pharma 
+
+payload <- list(
+  'seriesid'=c('CEU2023700010','CEU2023700001','CEU3232540010','CEU3232540001'),
+  'startyear'=1990,
+  'endyear'=2022,
+  #'catalog'=FALSE,
+  #'calculations'=TRUE,
+  'annualaverage'=TRUE,
+  'registrationKey'='cb402f3bd90f46238e6beb45b2dcee65')
+dataCES <- blsAPI(payload, 2, return_data_frame =T)
+
+# recode serieID, label the value 
+dataCES$field <- NA
+dataCES$gender <- NA
+dataCES[dataCES$seriesID=='CEU2023700010',]$field <- 'civil engineering'
+dataCES[dataCES$seriesID=='CEU2023700001',]$field <- 'civil engineering'
+dataCES[dataCES$seriesID=='CEU3232540010',]$field <- 'pharmaceutical'
+dataCES[dataCES$seriesID=='CEU3232540001',]$field <- 'pharmaceutical'
+
+dataCES[dataCES$seriesID=='CEU2023700010',]$gender <- 'women'
+dataCES[dataCES$seriesID=='CEU2023700001',]$gender <- 'all'
+dataCES[dataCES$seriesID=='CEU3232540010',]$gender <- 'women'
+dataCES[dataCES$seriesID=='CEU3232540001',]$gender <- 'all'
+
+# compute the mean of each year
+dataCES$year <- as.numeric(dataCES$year)
+dataCES$value <- as.numeric(dataCES$value)
+dataCES <- dataCES %>% select(year,value,field,gender) %>% group_by(year,field,gender) %>% summarise(value=mean(value))
+colnames(dataCES) <- c('year','field','gender','value')
+
+# compute the proportion of women
+dataCES <- dataCES %>% pivot_wider(names_from = gender, values_from = value)
+dataCES$prop_women <- 100*dataCES$women/dataCES$all
+
+```
+
+
+```{r}
+# plot 
+ggplot(dataCES, aes(x=year, y=prop_women)) + geom_line(aes(colour=field)) + labs(x = "year", y="proportion of women", title ="proportion of women across fields (CES)") + ylim(10, 50)
+ggplot(dataCES, aes(x=year, y=women)) + geom_line(aes(colour=field)) + labs(x = "year", y="number of women", title ="number of women in thousand (CES)")
+```
