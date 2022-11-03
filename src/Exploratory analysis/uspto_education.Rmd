@@ -1,0 +1,241 @@
+---
+title: "gender distribution and education"
+output: html_document
+---
+
+## Load library
+```{r}
+# upload library
+library(jsonlite)
+library(dplyr)
+library(crosstable)
+library(ggplot2)
+library(nlme)
+#install.packages(‘texreg’)
+library(texreg)
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+library(coefplot)
+library(jtools)
+library(ggstance)
+library(tidyr)
+library(usmap) #import the package
+library(ggplot2) #use ggplot2 to add layer for visualization
+library(mapview)
+#library(sf)
+library(PNWColors)
+library(transformr)
+library(readr)
+library(stringr)
+```
+
+## Uplaod and combine data
+```{r}
+# upload the patent data
+inventor_pharma <- read.csv("/project/biocomplexity/sdad/projects_data/uspto/PatentsView/working/pharma_pat_inv_loc.csv")
+inventor_pharma$field <- "pharmaceuticals"
+inventor_civil<- read.csv("/project/biocomplexity/sdad/projects_data/uspto/PatentsView/working/civil_pat_inv_loc.csv")
+inventor_civil$field <- "civil engineering"
+
+# combine data from the two fields
+inventor <- dplyr::bind_rows(inventor_civil, inventor_pharma)
+inventor$female_flag <- 1-inventor$male_flag
+inventor$gender[inventor$male_flag==1] <- "male"
+inventor$gender[inventor$male_flag==0] <- "female"
+inventor <- inventor %>% mutate(gender = ifelse(is.na(gender), 'unknown', gender))
+
+# upload the education data (ncses)
+edu_minor <- read_csv("/project/biocomplexity/sdad/projects_data/uspto/PatentsView/working/ncses_minor_recent_degree.csv", col_types = cols(female = col_number(), male = col_number()))
+edu_major <- read_csv("/project/biocomplexity/sdad/projects_data/uspto/PatentsView/working/ncses_major_recent_degree.csv", col_types = cols(female = col_number(), male = col_number()))
+```
+
+
+```{r}
+# count the gender proportion within inventors by year
+US_inventor <- inventor %>% 
+  filter(country=="US") %>%
+  select(inventor_id,patent_id,gender,year,field) %>%
+  group_by(gender,year,field) %>% 
+  mutate(num_invent=length(unique(inventor_id)), 
+         num_patents= length(unique(patent_id)),
+         .keep = "unused") %>%
+  unique()
+
+  
+# pivot
+US_invent <- US_inventor %>% 
+  select(gender,year,field,num_invent,num_patents) %>%
+  pivot_wider(names_from = gender, values_from = c(num_invent,num_patents))
+
+US_invent$total <- US_invent$num_invent_female + US_invent$num_invent_male + US_invent$num_invent_unknown
+US_invent$prop_female <- US_invent$num_invent_female/US_invent$total
+US_invent$prod_female <- US_invent$num_patents_female/US_invent$num_invent_female
+
+# plot the trends
+ggplot(US_invent, aes(x=year, y=prop_female)) + geom_line(aes(colour=field))
+
+ggplot(US_invent, aes(x=year, y=prod_female)) + geom_line(aes(colour=field))
+
+
+```
+
+# Education as the gap
+```{r}
+# Need to group (but how to group): select fields containing some key words. (pharma and engineering) "Chemistry", ,"chemistry"
+major_pharma_field <- edu_major %>% filter(str_detect(fields,c("biochemistry","Pharmacy","Pharmacology")))
+major_pharma_field$group_field <- "pharmaceuticals"
+major_engi_field <- edu_major %>% filter(str_detect(fields, "engineering"))
+major_engi_field$group_field <- "civil engineering"
+all_major_sub <- rbind(major_engi_field,major_pharma_field)
+
+# gender by fields
+edu_field <- all_major_sub[all_major_sub$degree=="Total for selected values", c("year","fields","group_field","male","female")]
+edu_field[is.na(edu_field)] <- 0
+edu_field <- edu_field %>% 
+  select(year,group_field,female,male) %>%
+  group_by(year,group_field) %>%
+  mutate(male=sum(male), 
+         female= sum(female),
+         .keep = "unused") %>%
+  unique()
+edu_field$prop_female <- edu_field$female/(edu_field$female + edu_field$male)
+
+
+#plot the proportion of female by field (all fields)
+ggplot(edu_field, aes(x=year, y=prop_female)) + geom_line(aes(colour=group_field))
+ggplot(US_invent[US_invent$year %in% 2000:2019,], aes(x=year, y=prop_female)) + geom_line(aes(colour=field))
+
+```
+
+```{r}
+# gender and inventors
+edu_year <- unique(edu_field$year)
+US_inventor_edu <- US_inventor[US_inventor$year %in% edu_year,]
+
+# merge with edu_fields data
+US_inv_edu_merge <- merge(edu_field[,c(1,2,5)], US_inventor_edu, by.x = c("year","group_field"), by.y = c("year","field"), all.x = TRUE)
+US_inv_edu_merge$gender_flag <- 0
+US_inv_edu_merge[US_inv_edu_merge$gender=="female",]$gender_flag <- 1
+
+# prediction
+#US_inventor$state <- factor(US_inventor$state)
+mylogit1 <- glm(gender_flag ~ year + prop_female + prop_female*factor(group_field), data = US_inv_edu_merge, family = "binomial")
+summary(mylogit1)
+```
+
+
+# location: is there any region which increase the probability the inventor to be woman
+```{r}
+# female flag
+inventor$female_flag <- 0
+inventor[inventor$gender=="female",]$female_flag <- 1
+
+# female flag
+inventor$field_flag <- 0
+inventor[inventor$field=="civil engineering",]$field_flag <- 1
+
+#measure the effect
+US_inventor <- inventor %>% 
+  filter(country=="US") %>%
+  select(inventor_id,female_flag,year,field,field_flag,state) %>%
+  unique()
+
+# gender difference over time across state
+mylogit00 <- glm(female_flag ~ year  , data = US_inventor, family = "binomial")
+mylogit01 <- glm(female_flag ~ year + year*field_flag -1 , data = US_inventor, family = "binomial")
+summary(mylogit00)
+summary(mylogit01)
+```
+
+
+```{r}
+# gender difference over time across state
+mylogit02 <- glm(female_flag ~ year + year**field_flag**factor(state) -1 , data = US_inventor, family = "binomial")
+summary(mylogit02)
+```
+
+
+```{r}
+# subset the data to county "AP = Armed Forces Pacific" 
+US_inventor_AP <- inventor %>% 
+  filter(country=="US", state=="AP") %>%
+  select(inventor_id,patent_id,gender,year,field) %>%
+  group_by(gender,year,field) %>% 
+  mutate(num_invent=length(unique(inventor_id)), 
+         num_patents= length(unique(patent_id)),
+         .keep = "unused") %>%
+  unique()
+
+# pivot
+US_invent <- US_inventor_AP %>% 
+  select(gender,year,field,num_invent,num_patents) %>%
+  pivot_wider(names_from = gender, values_from = num_invent)
+
+#US_invent$total <- US_invent$num_invent_female + US_invent$num_invent_male + US_invent$num_invent_unknown
+#US_invent$prop_female <- US_invent$num_invent_female/US_invent$total
+#US_invent$prod_female <- US_invent$num_patents_female/US_invent$num_invent_female
+
+# plot the trends
+#ggplot(US_invent, aes(x=year, y=prop_female)) + geom_line(aes(colour=field))
+
+```
+
+
+
+
+
+```{r}
+# subset the data to county "AP = Armed Forces Pacific" 
+US_inventor_AP <- inventor %>% 
+  filter(country=="US", state=="AP") %>%
+  select(inventor_id,patent_id,gender,year,field) %>%
+  group_by(gender,year,field) %>% 
+  mutate(num_invent=length(unique(inventor_id)), 
+         num_patents= length(unique(patent_id)),
+         .keep = "unused") %>%
+  unique()
+
+# pivot
+US_invent <- US_inventor_AP %>% 
+  select(gender,year,field,num_invent,num_patents) %>%
+  pivot_wider(names_from = gender, values_from = num_invent)
+
+#US_invent$total <- US_invent$num_invent_female + US_invent$num_invent_male + US_invent$num_invent_unknown
+#US_invent$prop_female <- US_invent$num_invent_female/US_invent$total
+#US_invent$prod_female <- US_invent$num_patents_female/US_invent$num_invent_female
+
+# plot the trends
+#ggplot(US_invent, aes(x=year, y=prop_female)) + geom_line(aes(colour=field))
+
+```
+
+# 2. Education: doctorate survey
+```{r}
+library(readr)
+
+# upload the data
+#ncses_doctorate <- read_csv("src/Exploratory analysis/education/ncses_doctorate.csv")
+
+# data treatment
+ncses_doctorate <- ncses_doctorate %>% filter(!(SE_field=='Total for selected values'))
+ncses_doctorate <- ncses_doctorate %>% filter(!(broad_field=='Total for selected values'))
+ncses_doctorate <- ncses_doctorate %>% filter(!(detailed_field=='Total for selected values'))
+ncses_doctorate <- ncses_doctorate %>% filter(!(detailed_field=='Chemistry+D16'))
+ncses_doctorate <- ncses_doctorate  %>% 
+  mutate(sex=recode(sex, 'Total for selected values'='Total')) %>%
+  select(year,detailed_field,sex,value)
+colnames(ncses_doctorate) <- c('year','field','gender','value')
+
+# pivot the table
+ncses_doctorate <- ncses_doctorate %>% 
+  pivot_wider(names_from = gender, values_from = value)
+
+# proportion
+ncses_doctorate$prop_women <- 100*ncses_doctorate$Female/(ncses_doctorate$Total)
+
+# plot the graph
+ggplot(ncses_doctorate, aes(x=year, y=prop_women)) + geom_line(aes(colour=field)) + labs(x = "year", y="proportion of women", title ="proportion of women across fields") #+ ylim(10, 50)
+```
+
+
