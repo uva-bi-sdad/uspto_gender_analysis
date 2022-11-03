@@ -1,6 +1,7 @@
 ---
-title: "Civil Engineering Patent Inventor Locations"
-author: ""
+title: "Patent Inventor Locations"
+subtitle: "A Case Study Comparing Gender in the Fields of Civil Engineering and Pharmaceuticals"
+author: "Social and Decision Analytics Division, Biocomplexity Institute, University of Virginia"
 date: ""
 output: html_document
 ---
@@ -9,23 +10,87 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+<br>
+
+#### **Introduction**
+
+In this case study we explore patent inventor locations by gender for the fields of civil engineering and pharmaceuticals.  These two fields were chosen based on their participation rate for women on patents.  Civil engineering has a very low rate of patent inventors who are women, whereas pharmaceuticals has a very high rate.
+
+**Data Source:** The data used to create the following visualizations is on granted patents and was downloaded from [PatentsView](https://patentsview.org/download/data-download-tables) on August 17th, 2022.  
+
+<br/>  
+
+##### **Civil Engineering** 
+
+The two animations below show civil engineering patent inventor locations by year for all inventors and those for women. 
+
+If an inventor moved locations in a given year, that inventor is counted in all locations.  For example, if an inventor lived in Boston and New York in the same year, the inventor would be represented in the count of inventors in Boston and in New York.  
+
+**Data Download:** To download the data that we used to create these visualization (CSV format), click the button.  
+
+```{r, echo=FALSE} 
+library(downloadthis)
+
+download_link(
+  link = "https://github.com/uva-bi-sdad/uspto_gender_analysis/raw/master/docs/data/civil_inv_loc_map_data.csv",
+  button_label = "Download Civil Engineering Inventor Location Data (CSV)",
+  button_type = "default",
+  has_icon = TRUE,
+  icon = "fa fa-save",
+  self_contained = FALSE
+)
+```
+
+<br/>  
+*Note: While the scale for marker size is consistent within each animation, it is not consistent across animations. Hover over locations on the maps to see the number of inventors (all or women).*
+
+
+<br>
 ```{r, echo=FALSE}
-htmltools::includeHTML("all_locations.html")
+htmltools::includeHTML("civil_all_locations.html")
 ```
 <br>
 ```{r, echo=FALSE}
-htmltools::includeHTML("female_locations.html")
+htmltools::includeHTML("civil_women_locations.html")
 ```
 
 
-:::::::::::::: {.columns}
+<br/> 
 
-::: {.column width="48%"}
+##### **Pharmaceuticals**
 
-:::
+The two animations below show pharmaceuticals patent inventor locations by year for all inventors and those for women. 
 
-::: {.column width="48%"}
+If an inventor moved locations in a given year, that inventor is counted in all locations.  For example, if an inventor lived in Boston and New York in the same year, the inventor would be represented in the count of inventors in Boston and in New York.  
 
-:::
+**Data Download:** To download the data that we used to create these visualization (CSV format), click the button.  
 
-::::::::::::::
+```{r, echo=FALSE} 
+library(downloadthis)
+
+download_link(
+  link = "https://github.com/uva-bi-sdad/uspto_gender_analysis/raw/master/docs/data/pharma_inv_loc_map_data.csv",
+  button_label = "Download Pharmaceuticals Inventor Location Data (CSV)",
+  button_type = "default",
+  has_icon = TRUE,
+  icon = "fa fa-save",
+  self_contained = FALSE
+)
+```
+
+<br/>  
+*Note: While the scale for marker size is consistent within each animation, it is not consistent across animations. Hover over locations on the maps to see the number of inventors (all or women).*
+
+
+<br>
+```{r, echo=FALSE}
+htmltools::includeHTML("pharma_all_locations.html")
+```
+<br>
+```{r, echo=FALSE}
+htmltools::includeHTML("pharma_women_locations.html")
+```
+
+
+
+
