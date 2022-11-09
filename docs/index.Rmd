@@ -53,7 +53,9 @@ downloadthis::download_this(
 ```
 
 <br/>  
-*Note: While the scale for marker size is consistent within each animation, it is not consistent across animations. Hover over locations on the maps to see the number of inventors (all or women).*
+*Notes: While the scale for marker size is consistent within each animation, it is not consistent across animations. Marker size is relative to the maximum for the data underlying each animation. Hover over locations on the maps to see the number of inventors (all or women).*
+
+*We used the geolocations exactly as given in the PatentsView data.*
 
 
 <br>
@@ -101,7 +103,9 @@ downloadthis::download_this(
 ```
 
 <br/>  
-*Note: While the scale for marker size is consistent within each animation, it is not consistent across animations. Hover over locations on the maps to see the number of inventors (all or women).*
+*Notes: While the scale for marker size is consistent within each animation, it is not consistent across animations. Marker size is relative to the maximum for the data underlying each animation. Hover over locations on the maps to see the number of inventors (all or women).*
+
+*We used the geolocations exactly as given in the PatentsView data.*
 
 
 <br>

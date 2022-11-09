@@ -1,0 +1,553 @@
+---
+title: "Source-Destination Pairs"
+author: "Kathryn Linehan"
+date: "10/26/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(readr)
+library(naniar)
+```
+
+**All Civil Engineering Inventors**
+
+```{r}
+# prep data
+
+df <- read_csv("../../data/PatentsView/working/civil_pat_inv_loc.csv") %>%
+  arrange(date)
+
+```
+
+```{r}
+
+# get list of locations for inventors with 2+ locations
+
+inv_multi_loc <- unique(df[c("inventor_id", "location_id", "male_flag")]) %>%
+  group_by(inventor_id, male_flag) %>%
+  summarise(num_loc = n()) %>%
+  filter(num_loc > 1)
+  
+temp <- unique(df[c("inventor_id", "location_id", "male_flag")]) %>%
+  filter(inventor_id %in% inv_multi_loc$inventor_id)
+
+```
+```{r}
+
+loc_list = vector("list", nrow(inv_multi_loc))
+i = 1
+
+for (inventor in inv_multi_loc$inventor_id)
+{
+  t = temp[temp$inventor_id == inventor, "location_id"]
+  loc_list[[i]] = t$location_id  
+  i = i+1
+}
+
+inv_multi_loc$locations <- loc_list
+```
+
+
+Source-destination pairs for all inventors 
+
+```{r}
+# extract source-destination information
+
+# calculate number of source-destination pairs: sum(num_loc-1)
+number_pairs = sum(inv_multi_loc$num_loc - 1)
+
+source_dest_df <- data.frame(matrix("", nrow = number_pairs, ncol = 2))
+colnames(source_dest_df) <- c("source_id", "destination_id")
+
+# populate source-destination pairs
+k = 1
+for (i in 1:nrow(inv_multi_loc))
+{
+  locs <- inv_multi_loc$locations[[i]]
+  
+  for (j in 1:(length(locs)-1))
+  {
+    source_dest_df[k, ] = c(locs[j], locs[j+1])
+    k = k + 1
+  }
+  
+}
+
+
+```
+
+```{r}
+# group source-destination pairs
+
+sd_cnts <- source_dest_df %>%
+  group_by(source_id, destination_id) %>%
+  summarise(frequency = n())
+
+```
+```{r}
+# merge in location information
+
+loc_info <- df[ , c("location_id", "city", "state", "country", "latitude", "longitude")] %>%
+  distinct()
+
+temp <- merge(sd_cnts, loc_info, by.x = "source_id", by.y = "location_id", all.x = TRUE)
+colnames(temp) <- c("source_id", "destination_id", "frequency", "source_city", "source_state",
+                    "source_country", "source_lat", "source_long")
+
+sdp_df <- merge(temp, loc_info, by.x = "destination_id", by.y = "location_id", all.x = TRUE)
+colnames(sdp_df) <- c(colnames(sdp_df)[1:8], "dest_city", "dest_state",
+                    "dest_country", "dest_lat", "dest_long")
+
+sdp_df <- sdp_df[ ,c(2,1,3:13)]
+
+write_csv(sdp_df, "../../data/PatentsView/final/civil_source_dest_pairs.csv")
+
+```
+
+
+```{r}
+# read in data
+
+sdp_df <- read_csv("../../data/PatentsView/final/civil_source_dest_pairs.csv")
+
+```
+
+
+```{r}
+# missing lat,longs for source-dest pairs
+
+miss_var_summary(sdp_df)
+
+```
+
+### Chord Diagram for City, State (Country) moves
+
+```{r}
+# chord diagram for top 10 source-destination pairs
+
+top_moves <- sdp_df %>%
+  filter(!is.na(source_lat) & !is.na(source_long) & !is.na(dest_lat) & !is.na(dest_long)) %>%
+  arrange(desc(frequency)) %>%
+  head(20)
+
+# Note: Sugarland should be Sugar Land, TX - Sugarland entries being removed bc lat and longs missing
+
+top_moves$source = paste0(top_moves$source_city, 
+                          ifelse(is.na(top_moves$source_state), 
+                                 paste0(" (", top_moves$source_country, ")"), 
+                                 paste0(", ", top_moves$source_state)))
+
+top_moves$dest = paste0(top_moves$dest_city, 
+                          ifelse(is.na(top_moves$dest_state), 
+                                 paste0(" (", top_moves$dest_country, ")"), 
+                                 paste0(", ", top_moves$dest_state)))
+
+
+data <- top_moves %>%
+  arrange(source_country,source_state) %>%
+  select(source, dest, frequency) 
+
+```
+
+
+```{r}
+library(circlize)
+
+chordDiagram(data, directional = 1, direction.type = c("diffHeight", "arrows"),
+    link.arr.type = "big.arrow")
+
+```
+
+```{r}
+library(migest)
+
+mig_chord(data, label_size = 0.6, axis_size = 0.5, preAllocateTracks = list(track.height = 0.25))
+
+# labels...change order.
+
+```
+```{r}
+pdf(file = "civil_migration.pdf")
+mig_chord(data, label_size = 0.8, axis_size = 0.5, preAllocateTracks = list(track.height = 0.25))
+dev.off()
+
+```
+
+```{r}
+# convert pdf to png
+
+library(pdftools)
+
+pdf_convert(
+  pdf = "civil_migration.pdf",
+  format = "png",
+  dpi = 200,
+  filenames = "civil_migration.png"
+)
+
+
+```
+
+### Chord Diagram for country moves
+
+```{r}
+# group source and destinations by country
+
+sdp_country_df <- sdp_df %>%
+  group_by(source_country, dest_country) %>%
+  summarise(freq = sum(frequency)) %>%
+  ungroup()
+```
+```{r}
+miss_var_summary(sdp_country_df)
+```
+
+
+```{r}
+
+# top 20 wasn't that interesting - almost all moves were within country
+
+# filtered to moves between countries
+
+data <- sdp_country_df %>%
+  filter(source_country != dest_country) %>%
+  arrange(desc(freq)) %>%
+  head(20)
+
+
+```
+
+
+```{r}
+
+mig_chord(data, label_size = 0.8, axis_size = 0.35) # preAllocateTracks = list(track.height = 0.25))
+
+# labels...change order.
+
+```
+```{r}
+
+pdf(file = "civil_migration_country.pdf")
+mig_chord(data, label_size = 1.0, axis_size = 0.5)
+dev.off()
+
+# convert pdf to png
+
+library(pdftools)
+
+pdf_convert(
+  pdf = "civil_migration_country.pdf",
+  format = "png",
+  dpi = 200,
+  filenames = "figures/civil_migration_country.png"
+)
+
+
+```
+### Chord Diagram for state moves
+
+```{r}
+# group source and destinations by state
+
+sdp_state_df <- sdp_df %>%
+  filter(source_country == "US" & dest_country == "US") %>%
+  group_by(source_state, dest_state) %>%
+  summarise(freq = sum(frequency)) %>%
+  ungroup()
+```
+```{r}
+miss_var_summary(sdp_state_df)
+```
+
+
+
+
+```{r}
+
+# top 20 wasn't that interesting - almost all moves were within state
+
+# filtered to moves between states
+
+data <- sdp_state_df %>%
+  filter(source_state != dest_state) %>%
+  arrange(desc(freq)) %>%
+  head(20)
+
+
+```
+
+
+```{r}
+
+mig_chord(data, label_size = 0.8, axis_size = 0.35) # preAllocateTracks = list(track.height = 0.25))
+
+# labels...change order.
+
+```
+
+```{r}
+
+pdf(file = "civil_migration_state.pdf")
+mig_chord(data, label_size = 1.0, axis_size = 0.7)
+dev.off()
+
+# convert pdf to png
+
+library(pdftools)
+
+pdf_convert(
+  pdf = "civil_migration_state.pdf",
+  format = "png",
+  dpi = 200,
+  filenames = "figures/civil_migration_state.png"
+)
+
+
+```
+
+
+
+**Civil Engineering Inventors - Women**
+
+```{r}
+
+# extract source-destination information for women inventors
+
+inv_multi_loc_W <- inv_multi_loc %>%
+  filter(male_flag == 0)
+```
+
+```{r}
+# calculate number of source-destination pairs: sum(num_loc-1)
+number_pairs = sum(inv_multi_loc_W$num_loc - 1)
+
+source_dest_df <- data.frame(matrix("", nrow = number_pairs, ncol = 2))
+colnames(source_dest_df) <- c("source_id", "destination_id")
+
+# populate source-destination pairs
+k = 1
+for (i in 1:nrow(inv_multi_loc_W))
+{
+  locs <- inv_multi_loc_W$locations[[i]]
+  
+  for (j in 1:(length(locs)-1))
+  {
+    source_dest_df[k, ] = c(locs[j], locs[j+1])
+    k = k + 1
+  }
+  
+}
+
+```
+
+```{r}
+# group source-destination pairs
+
+sd_cnts <- source_dest_df %>%
+  group_by(source_id, destination_id) %>%
+  summarise(frequency = n())
+
+```
+```{r}
+# merge in location information
+
+loc_info <- df[ , c("location_id", "city", "state", "country", "latitude", "longitude")] %>%
+  distinct()
+
+temp <- merge(sd_cnts, loc_info, by.x = "source_id", by.y = "location_id", all.x = TRUE)
+colnames(temp) <- c("source_id", "destination_id", "frequency", "source_city", "source_state",
+                    "source_country", "source_lat", "source_long")
+
+sdp_df <- merge(temp, loc_info, by.x = "destination_id", by.y = "location_id", all.x = TRUE)
+colnames(sdp_df) <- c(colnames(sdp_df)[1:8], "dest_city", "dest_state",
+                    "dest_country", "dest_lat", "dest_long")
+
+sdp_df <- sdp_df[ ,c(2,1,3:13)]
+
+write_csv(sdp_df, "../../data/PatentsView/final/civil_W_source_dest_pairs.csv")
+
+```
+
+```{r}
+miss_var_summary(sdp_df)
+```
+```{r}
+# chord diagram for top 10 source-destination pairs
+
+top_moves <- sdp_df %>%
+  filter(!is.na(source_lat) & !is.na(source_long) & !is.na(dest_lat) & !is.na(dest_long)) %>%
+  arrange(desc(frequency)) %>%
+  head(20)
+
+# Note: Sugarland should be Sugar Land, TX - Sugarland entries being removed bc lat and longs missing
+
+top_moves$source = paste0(top_moves$source_city, 
+                          ifelse(is.na(top_moves$source_state), 
+                                 paste0(" (", top_moves$source_country, ")"), 
+                                 paste0(", ", top_moves$source_state)))
+
+top_moves$dest = paste0(top_moves$dest_city, 
+                          ifelse(is.na(top_moves$dest_state), 
+                                 paste0(" (", top_moves$dest_country, ")"), 
+                                 paste0(", ", top_moves$dest_state)))
+
+
+data <- top_moves %>%
+  arrange(source_country,source_state) %>%
+  select(source, dest, frequency) 
+
+```
+
+```{r}
+library(migest)
+
+mig_chord(data, label_size = 0.6, axis_size = 0.5, preAllocateTracks = list(track.height = 0.25))
+
+# labels...change order.
+
+```
+```{r}
+
+pdf(file = "civil_W_migration.pdf")
+mig_chord(data, label_size = 0.65, axis_size = 0.7, preAllocateTracks = list(track.height = 0.25))
+dev.off()
+
+# convert pdf to png
+
+library(pdftools)
+
+pdf_convert(
+  pdf = "civil_W_migration.pdf",
+  format = "png",
+  dpi = 200,
+  filenames = "figures/civil_W_migration.png"
+)
+
+
+```
+
+### Chord Diagram for country moves
+
+```{r}
+# group source and destinations by country
+
+sdp_country_df <- sdp_df %>%
+  group_by(source_country, dest_country) %>%
+  summarise(freq = sum(frequency)) %>%
+  ungroup()
+```
+
+```{r}
+miss_var_summary(sdp_country_df)
+```
+
+
+```{r}
+
+# top 20 wasn't that interesting - almost all moves were within country
+
+# filtered to moves between countries
+
+data <- sdp_country_df %>%
+  filter(source_country != dest_country) %>%
+  arrange(desc(freq)) %>%
+  head(20)
+
+
+```
+
+
+```{r}
+
+mig_chord(data, label_size = 0.8, axis_size = 0.5) # preAllocateTracks = list(track.height = 0.25))
+
+# labels...change order.
+
+```
+
+
+```{r}
+
+pdf(file = "civil_W_migration_country.pdf")
+mig_chord(data, label_size = 1.0, axis_size = 1.0)
+dev.off()
+
+# convert pdf to png
+
+library(pdftools)
+
+pdf_convert(
+  pdf = "civil_W_migration_country.pdf",
+  format = "png",
+  dpi = 200,
+  filenames = "figures/civil_W_migration_country.png"
+)
+
+
+```
+
+### Chord Diagram for state moves
+
+```{r}
+# group source and destinations by state
+
+sdp_state_df <- sdp_df %>%
+  filter(source_country == "US" & dest_country == "US") %>%
+  group_by(source_state, dest_state) %>%
+  summarise(freq = sum(frequency)) %>%
+  ungroup()
+```
+
+```{r}
+miss_var_summary(sdp_state_df)
+```
+
+
+```{r}
+
+# top 20 wasn't that interesting - almost all moves were within state
+
+# filtered to moves between states
+
+data <- sdp_state_df %>%
+  filter(source_state != dest_state) %>%
+  arrange(desc(freq)) %>%
+  head(20)
+
+
+```
+
+
+```{r}
+
+mig_chord(data, label_size = 0.8, axis_size = 0.6) # preAllocateTracks = list(track.height = 0.25))
+
+# labels...change order.
+
+```
+
+```{r}
+
+pdf(file = "civil_W_migration_state.pdf")
+mig_chord(data, label_size = 1.0, axis_size = 1.0)
+dev.off()
+
+# convert pdf to png
+
+library(pdftools)
+
+pdf_convert(
+  pdf = "civil_W_migration_state.pdf",
+  format = "png",
+  dpi = 200,
+  filenames = "figures/civil_W_migration_state.png"
+)
+
+
+```

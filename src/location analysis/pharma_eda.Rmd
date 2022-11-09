@@ -1,0 +1,277 @@
+---
+title: "EDA - Pharmaceuticals Patents"
+author: "Kathryn Linehan"
+date: "9/23/2022"
+output: 
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(naniar)
+library(plotly)
+
+cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+```
+**Patents View data:** https://patentsview.org/download/data-download-tables  
+**Data Dictionary:** https://patentsview.org/download/data-download-dictionary
+
+
+```{r}
+# get data
+df <- read_csv("../../data/PatentsView/working/pharma_pat_inv_loc.csv")
+
+head(df)
+```
+
+```{r}
+miss_var_summary(df)
+```
+
+```{r}
+# missingness in male_flag (NA - no gender attributed), 
+# from data dictionary: attribution status: result of inventor gender attribution (1 = inventor gender attributed, 99 = inventor gender not attributed; attribution algorithm failed to assign a gender, 98 = inventor added to the database after attribution was performed) 
+
+df %>%
+  filter(is.na(male_flag)) %>%
+  select(attribution_status) %>%
+  table()
+
+```
+
+
+
+```{r}
+# missing variable summary contained only to US locations
+
+df %>% 
+  filter(country == "US") %>%
+  miss_var_summary()
+```
+
+
+
+```{r}
+nrow(df)
+length(unique(df$patent_id))
+length(unique(df$inventor_id))
+length(unique(df$location_id))
+
+
+```
+**Unique Patents**: 309,335  
+**Unique Inventors**: 283,382  
+**Unique Locations**: 33,809  
+
+```{r}
+
+# find unique number of male and female inventors
+
+inv <- unique(df[c("inventor_id", "male_flag", "attribution_status")]) 
+  
+nrow(inv)
+sum(is.na(inv$male_flag))
+sum(is.na(inv$male_flag))/nrow(inv)
+
+table(inv$male_flag)
+table(inv$male_flag)/nrow(inv)  
+
+
+inv %>%
+  filter(is.na(male_flag)) %>%
+  select(attribution_status) %>%
+  table()
+
+```
+ 
+```{r}
+# find the number of locations per inventor
+
+inv_loc_counts <- unique(df[c("inventor_id", "location_id", "male_flag")]) %>%
+  group_by(inventor_id, male_flag) %>%
+  summarise(num_loc = n())
+```
+
+```{r}
+# group 3+ locations
+
+inv_loc_counts$num_loc_grouped = as.character(inv_loc_counts$num_loc)
+inv_loc_counts[inv_loc_counts$num_loc > 2, "num_loc_grouped"] <- "3+"
+
+# change male flag NAs to Unknown for convenience
+
+inv_loc_counts$male_flag = as.character(inv_loc_counts$male_flag)
+inv_loc_counts[is.na(inv_loc_counts$male_flag), "male_flag"] <- "Unknown"
+
+```
+
+```{r}
+table(inv_loc_counts$num_loc)
+table(inv_loc_counts$num_loc_grouped)
+
+ggplot(inv_loc_counts, aes(x=as.factor(num_loc_grouped), fill = factor(male_flag, levels = c("Unknown","0","1")))) + 
+  geom_bar(width = 0.7, position = "stack") +  # fill = cbPalette[4]
+  scale_fill_manual(name = "Gender", 
+                    labels = c("Unknown", "Women", "Men"), 
+                    values=c(cbPalette[1], "#DB6D00", "#006DDB")) +
+  ggtitle("Number of Locations per Inventor") +
+  xlab("Number of Locations") +
+  ylab("Count of Inventors") +
+  scale_y_continuous(labels = scales::comma) +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position=c(0.85,0.8))
+
+ggsave("figures/num_loc_P.png", dpi = 600, width = 12, height = 10, units = "cm", scale = 1)
+
+```
+
+```{r}
+# who has 13 locations?
+
+temp <- inv_loc_counts %>%
+  filter(num_loc == 13)
+
+df %>%
+  filter(inventor_id == temp$inventor_id)
+
+# 10 locations
+
+temp <- inv_loc_counts %>%
+  filter(num_loc == 10)
+
+df %>%
+  filter(inventor_id %in% temp$inventor_id) %>%
+  select(name_first, name_last) %>%
+  unique
+
+```
+
+```{r}
+# man with 13 locations - how many patents does he have?
+
+df %>%
+  filter(inventor_id == "fl:ja_ln:orban-4") %>%  # from civil
+  nrow()
+
+```
+
+
+
+```{r}
+# number of patents by year
+
+num_patents_per_year <- unique(df[c("patent_id", "year")]) 
+table(num_patents_per_year$year)
+
+ggplot(num_patents_per_year, aes(x=year)) + 
+  geom_bar(fill = '#004949') +
+  #scale_x_continuous(breaks = c(1:9)) +
+  #xlim(0,10) +
+  ggtitle("Number of Patents per Year") +
+  xlab("Year")
+```
+
+
+```{r}
+# number of patents by year with at least 1 female inventor
+
+female <- df %>%
+  group_by(patent_id) %>%
+  summarise(num_female_inv = sum(male_flag == 0, na.rm = TRUE))
+
+patents <- merge(num_patents_per_year, female, by = "patent_id", all.x = TRUE)
+patents$female <- FALSE
+patents[patents$num_female_inv > 0, "female"] <- TRUE
+
+#sum(is.na(patents$num_female_inv))
+```
+
+```{r}
+table(patents$num_female_inv)
+```
+
+```{r}
+years <- patents %>%
+  group_by(year) %>%
+  summarise(num_patents = n(),
+            num_female_patents = sum(female)) %>%
+  mutate(pct_female_patents = 100*(num_female_patents/num_patents))
+```
+
+```{r}
+ggplot(data=patents, aes(x=year, fill=female)) + 
+  geom_bar() +
+  scale_fill_manual(name = "Inventors", 
+                    labels = c("All Men", "At Least One Woman"), 
+                    values=c("#006DDB", "#DB6D00")) +
+  scale_y_continuous(labels = scales::comma) +
+  ggtitle("Number of Patents per Year by Gender") +
+  xlab("Year") +
+  ylab("Number of Patents") +
+  theme(legend.position=c(0.2,0.8),
+        plot.title = element_text(hjust = 0.5, size=14),
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 14),
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14))
+
+ggsave("figures/pharma_patents_per_year.png", dpi = 600) #width = 12, height = 10, units = "cm", scale = 1)
+
+
+
+ggplot(data=years, aes(x=year, y=pct_female_patents)) +
+  geom_point(color = "#DB6D00") +
+  geom_line(color = "#DB6D00") + 
+  ggtitle("Percentage of Patents per Year with At Least One Woman Inventor") +
+  xlab("Year") +
+  ylab("Percentage") +
+  theme(plot.title = element_text(hjust = 0.5, size=14),
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 14),
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14))
+
+ggsave("figures/pharma_pctF_per_year.png", dpi = 600) #width = 12, height = 10, units = "cm", scale = 1)
+
+
+```
+
+```{r}
+loc_df <- read_csv("../../data/PatentsView/final/pharma_inv_loc_map_data.csv")
+```
+
+```{r}
+# table of top US locations over all time
+
+loc_US_all_time <- loc_df %>%
+  group_by(location_id, city, state) %>%
+  summarise(num_inv = sum(inv_cnt_TOTAL)) %>%
+  arrange(desc(num_inv)) 
+
+head(loc_US_all_time[ ,c(2:4)], 20)
+
+```
+
+```{r}
+# table of top US locations for female inventors over all time
+
+loc_US_all_time_F <- loc_df %>%
+  group_by(location_id, city, state) %>%
+  summarise(num_inv_W = sum(inv_cnt_W)) %>%
+  arrange(desc(num_inv_W)) 
+
+head(loc_US_all_time_F[ ,c(2:4)], 20)
+```
+
+
+
+
+
+
