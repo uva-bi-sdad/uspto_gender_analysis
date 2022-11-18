@@ -40,6 +40,7 @@ cbPalette.blk<-c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2
 gender.pallete <- c("#006DDB", "#DB6D00")
 field.pallete <- c("#B66DFF", "#004949")
 type.pallete <- c("#920000","#009999")
+mentor.pallete <- c("#882255","#CC6677","#AA4499")
 ```
 
 # Upload USPTO data and data treatment
@@ -344,10 +345,11 @@ inventor_status <- US_patent %>%
   unique()
 
 inventor_status$new <- 'new inventor'
-yearlist <- unique(inventor_status$year)
+yearlist <- sort(unique(inventor_status$year))
 
 for (f in c('pharmaceuticals','civil engineering')){
   for (t in yearlist[2:length(yearlist)]){
+    print(t)
     oldinventorslist <- unique(inventor_status$inventor_id[(inventor_status$field==f)&(inventor_status$year<t)])
     inventor_status$new[(inventor_status$field==f)&(inventor_status$year==t)&(inventor_status$inventor_id %in% oldinventorslist)] <- 'senior inventor'
   }
@@ -370,7 +372,7 @@ inventor_desc <- merge(inventor_desc, inventor_status, by.x=c('inventor_id','gen
 
 ```{r}
 # plot
-# description of inventors  ylim(0,5000) +
+# description of inventors  ylim(0,5000) + "#CC9900","#9999CC"
 status <- inventor_status %>%
   filter(gender=='women') %>%
   group_by(field,year,new) %>%
@@ -380,14 +382,14 @@ status <- inventor_status %>%
 plt7a <- ggplot(subset(status, (field=='pharmaceuticals') ), aes(x=year, y=number, fill=new)) + 
   geom_bar(stat="identity",colour="black") +
   ylim(0,4500) +
-  scale_fill_manual(values=gender.pallete) +
+  scale_fill_manual(values=c("#BD85EA","#7830B3")) +
   labs(x = "year", y="Number of women inventors", title='Pharmaceuticals', fill='') + 
   theme(plot.title = element_text(size=10))
 
 plt8a <- ggplot(subset(status, (field=='civil engineering') ), aes(x=year, y=number, fill=new)) + 
   geom_bar(stat="identity", colour="black") +
   ylim(0,4500) +
-  scale_fill_manual(values=gender.pallete) +
+  scale_fill_manual(values=c("#BD85EA","#7830B3")) +
   labs(x = "year", y="", title=' Civil Engineering', fill='') +
   theme(plot.title = element_text(size=10))
 
@@ -428,6 +430,7 @@ ggarrange(plt7b, plt8b,
           widths = c(3, 3) ,
           legend="bottom",
           common.legend=T)
+
 
 ```
 
@@ -520,7 +523,7 @@ Descriptive02 <- inventor_desc %>%
 plt7c <- ggplot(subset(Descriptive02, (field=='pharmaceuticals') ), aes(x=year, y=value, fill=otherwomen)) + 
   geom_bar(stat="identity",colour="black") +
   ylim(0,4500) +
-  scale_fill_manual(values=type.pallete) +
+  scale_fill_manual(values=c("#676767","#22cf22")) +
   labs(x = "year", y="Number of women inventors \n collaborating in patents", title='Pharmaceuticals', fill='') + 
   theme(plot.title = element_text(size=10))
 
@@ -528,6 +531,7 @@ plt8c <- ggplot(subset(Descriptive02, (field=='civil engineering') ), aes(x=year
   geom_bar(stat="identity", colour="black") +
   ylim(0,4500) +
   scale_fill_manual(values=type.pallete) +
+  scale_fill_manual(values=c("#676767","#22cf22")) +
   labs(x = "year", y="", title=' Civil Engineering', fill='') +
   theme(plot.title = element_text(size=10))
 
@@ -557,15 +561,19 @@ Descriptive02 <- inventor_desc %>%
             value=length(unique(patent_id)))
   
 
+senior1.palette <- c("#AA44FF","#BD85EA","#7830B3")
+senior2.palette <- c('#CC6677','#AA4499','#882255')
 #plot
 plt7d <- ggplot(subset(Descriptive02, (field=='pharmaceuticals') ), aes(x=year, y=value, fill=class) ) +
-  geom_bar(stat="identity", position='fill') +
+  geom_bar(stat="identity", position='fill', width=1.2, size=0) +
   labs(x = "year", y="Proportion of patents with more \n than 02 women inventors", title='Pharmaceuticals', fill='') +
+  scale_fill_manual(values=senior2.palette) +
   theme(plot.title = element_text(size=10))
 
 plt8d <- ggplot(subset(Descriptive02, (field=='civil engineering') ), aes(x=year, y=value, fill=class )) +
-  geom_bar(stat="identity", position='fill') +
+  geom_bar(stat="identity", position='fill', width=1.2, size=0) +
   labs(x = "year", y="", title=' Civil Engineering', fill='') +
+  scale_fill_manual(values=senior2.palette) +
   theme(plot.title = element_text(size=10))
 
 
@@ -783,7 +791,7 @@ dataCPS00 <- dataCPS %>%
 # plot
 plt15 <- ggplot(subset(dataCPS00, (field=='pharmaceuticals') & (gender %in% c('men','women')) ), aes(x=year, y=value, fill=gender)) + 
   geom_bar(stat="identity") +
-  ylim(0,2000) +
+  ylim(0,1500) +
   xlim(2009,2022) +
   scale_fill_manual(values=gender.pallete) +
   labs(x = "year", y="Employment", title='Pharmaceuticals occupations', fill='') + 
@@ -791,7 +799,7 @@ plt15 <- ggplot(subset(dataCPS00, (field=='pharmaceuticals') & (gender %in% c('m
 
 plt16 <- ggplot(subset(dataCPS00, (field=='civil engineering') & (gender %in% c('men','women')) ), aes(x=year, y=value, fill=gender)) + 
   geom_bar(stat="identity") +
-  ylim(0,2000) +
+  ylim(0,1500) +
   xlim(2009,2022) +
   scale_fill_manual(values=gender.pallete) +
   labs(x = "year", y="Employment", title='Civil engineering occupations', fill='') + 
@@ -843,7 +851,7 @@ ggarrange(plt15a, plt16a,
 
 ```{r}
 # Education data
-#ncses_doctorate <- read_csv("src/education/ncses_doctorate.csv")
+#ncses_doctorate <- read_csv("src/education/doctorate/ncses_doctorate.csv")
 
 # data treatment
 ncses_doctorate <- ncses_doctorate %>% filter(!(SE_field=='Total for selected values'))
@@ -875,14 +883,14 @@ plt17 <- ggplot(subset(ncses_doctorate01, (field=='pharmaceuticals') & (gender %
   geom_bar(stat="identity", colour='black') +
   ylim(0,15000) +
   scale_fill_manual(values=gender.pallete) +
-  labs(x = "year", y="Number of graduated doctoral students", title='Pharmaceuticals field', fill='') + 
+  labs(x = "year", y="Number of graduated doctorates", title='Pharmaceuticals field', fill='') + 
   theme(plot.title = element_text(size=10))
 
 plt18 <- ggplot(subset(ncses_doctorate01, (field=='civil engineering') & (gender %in% c('men','women')) ), aes(x=year, y=value, fill=gender)) + 
   geom_bar(stat="identity", colour='black') +
   ylim(0,15000) +
   scale_fill_manual(values=gender.pallete) +
-  labs(x = "year", y="Number of graduated doctoral students", title='Civil engineering field', fill='') + 
+  labs(x = "year", y="", title='Civil engineering field', fill='') + 
   theme(plot.title = element_text(size=10))
 
 
@@ -900,7 +908,7 @@ ggarrange(plt17, plt18,
 plt18a <- ggplot(subset(ncses_doctorate01, (field=='civil engineering') & (gender %in% c('men','women')) ), aes(x=year, y=value, fill=gender)) + 
   geom_bar(stat="identity", colour='black') +
   scale_fill_manual(values=gender.pallete) +
-  labs(x = "year", y="Number of graduated doctoral students", title='Civil engineering field', fill='') + 
+  labs(x = "year", y="Number of graduated doctorates", title='Civil engineering field', fill='') + 
   theme(plot.title = element_text(size=10))
 
 plt18a
@@ -922,7 +930,7 @@ ncses_doctorate02 <- ncses_doctorate %>%
 plt17a <- ggplot(subset(ncses_doctorate02, (gender %in% c('all')) ), aes(x=year, y=value, fill=gradfield)) + 
   geom_bar(stat="identity",colour='black') +
   scale_fill_manual(values=c('#FF9900','#996666','#000066')) +
-  labs(x = "year", y="Number of PhD graduated students", title='Pharmaceuticals', fill='') + 
+  labs(x = "year", y="Number of graduated doctorates", title='Pharmaceuticals', fill='') + 
   theme(plot.title = element_text(size=10))
 
 plt18a <- ggplot(subset(ncses_doctorate02, (gender %in% c('pct_women')) ), aes(x=year, y=value, fill=gradfield)) + 
