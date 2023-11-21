@@ -38,6 +38,7 @@ temp <- unique(df[c("inventor_id", "location_id", "male_flag")]) %>%
   filter(inventor_id %in% inv_multi_loc$inventor_id)
 
 ```
+
 ```{r}
 
 loc_list = vector("list", nrow(inv_multi_loc))
@@ -90,6 +91,7 @@ sd_cnts <- source_dest_df %>%
   summarise(frequency = n())
 
 ```
+
 ```{r}
 # merge in location information
 
@@ -172,6 +174,7 @@ mig_chord(data, label_size = 0.6, axis_size = 0.5, preAllocateTracks = list(trac
 # labels...change order.
 
 ```
+
 ```{r}
 pdf(file = "civil_migration.pdf")
 mig_chord(data, label_size = 0.8, axis_size = 0.5, preAllocateTracks = list(track.height = 0.25))
@@ -204,6 +207,7 @@ sdp_country_df <- sdp_df %>%
   summarise(freq = sum(frequency)) %>%
   ungroup()
 ```
+
 ```{r}
 miss_var_summary(sdp_country_df)
 ```
@@ -231,6 +235,7 @@ mig_chord(data, label_size = 0.8, axis_size = 0.35) # preAllocateTracks = list(t
 # labels...change order.
 
 ```
+
 ```{r}
 
 pdf(file = "civil_migration_country.pdf")
@@ -261,6 +266,7 @@ sdp_state_df <- sdp_df %>%
   summarise(freq = sum(frequency)) %>%
   ungroup()
 ```
+
 ```{r}
 miss_var_summary(sdp_state_df)
 ```
@@ -354,6 +360,7 @@ sd_cnts <- source_dest_df %>%
   summarise(frequency = n())
 
 ```
+
 ```{r}
 # merge in location information
 
@@ -377,6 +384,7 @@ write_csv(sdp_df, "../../data/PatentsView/final/civil_W_source_dest_pairs.csv")
 ```{r}
 miss_var_summary(sdp_df)
 ```
+
 ```{r}
 # chord diagram for top 10 source-destination pairs
 
@@ -412,6 +420,7 @@ mig_chord(data, label_size = 0.6, axis_size = 0.5, preAllocateTracks = list(trac
 # labels...change order.
 
 ```
+
 ```{r}
 
 pdf(file = "civil_W_migration.pdf")

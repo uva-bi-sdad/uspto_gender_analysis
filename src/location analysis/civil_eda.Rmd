@@ -152,16 +152,6 @@ df %>%
 
 ```
 
-```{r}
-# man with 13 locations - how many patents does he have?
-
-df %>%
-  filter(inventor_id == "fl:ja_ln:orban-4") %>%
-  nrow()
-
-```
-
-
 
 ```{r}
 # number of patents by year
@@ -246,6 +236,7 @@ ggsave("figures/civil_pctF_per_year.png", dpi = 600) #width = 12, height = 10, u
 ```{r}
 loc_df <- read_csv("../../data/PatentsView/working/civil_inv_loc_map_data.csv")
 ```
+
 ```{r}
 # table of top US locations over all time
 
@@ -257,6 +248,7 @@ loc_US_all_time <- loc_df %>%
 head(loc_US_all_time[ ,c(2:4)], 10)
 
 ```
+
 ```{r}
 # table of top US locations for female inventors over all time
 

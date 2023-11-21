@@ -153,15 +153,6 @@ df %>%
 
 ```
 
-```{r}
-# man with 13 locations - how many patents does he have?
-
-df %>%
-  filter(inventor_id == "fl:ja_ln:orban-4") %>%  # from civil
-  nrow()
-
-```
-
 
 
 ```{r}
